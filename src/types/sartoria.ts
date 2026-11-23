@@ -229,6 +229,8 @@ export interface OfficialSpecItem {
   label: string;
   value: string;
   provenance?: SpecProvenance;
+  constraintKind?: 'hard' | 'soft' | 'excluded' | 'pending';
+  sourceQuote?: string | null;
   sourceNote?: string;
   ergonomicCue?: string;
 }
@@ -247,13 +249,27 @@ export interface DimensionItem {
   score: number;
 }
 
+export interface DeconstructUsageMeta {
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  costUsd: number;
+  conservativeCostApplied?: boolean;
+}
+
 export interface DeconstructedRequirement {
   engineUsed: 'local_semantic' | 'llm_api';
+  modelUsed?: string;
+  schemaVersion?: string;
   summary: string;
   officialSpecs: OfficialSpecItem[];
   threeBuckets: ThreeBucketBreakdown;
   colorSpecifiedByUser: boolean;
   bodyErgonomics: string[];
+  followUpQuestions?: string[];
+  validationWarnings?: string[];
+  usageMeta?: DeconstructUsageMeta | null;
   dimensions: DimensionItem[];
   emotionTags: string[];
   aestheticArchetype: string;
@@ -401,11 +417,48 @@ export interface LedgerRecord {
   decisionHistory?: DecisionHistory;
 }
 
-export interface LlmSettings {
-  enabled: boolean;
-  baseUrl: string;
-  apiKey: string;
+export type EngineMode = 'online_worker' | 'local_rules';
+
+export interface WorkerQuotaSnapshot {
+  dateShanghai: string;
+  resetAt: string;
   model: string;
+  pricingVersion: string;
+  visitor: {
+    used: number;
+    limit: number;
+    remaining: number;
+  };
+  site: {
+    used: number;
+    limit: number;
+    remaining: number;
+  };
+  budget: {
+    spentMicros: number;
+    reservedMicros: number;
+    limitMicros: number;
+    spentUsd: number;
+    reservedUsd: number;
+    limitUsd: number;
+    remainingUsd: number;
+    exhausted: boolean;
+  };
+  totalLoggedCalls: number;
+}
+
+export interface WorkerLlmStatus {
+  configured: boolean;
+  model: string;
+  reasoningEffort: string;
+  schemaVersion: string;
+  quota: WorkerQuotaSnapshot;
+}
+
+export interface DeconstructErrorInfo {
+  errorCode: string;
+  message: string;
+  resetAt?: string;
 }
 
 export interface PresetDemoCase {

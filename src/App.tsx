@@ -14,7 +14,7 @@ import { FABRICS } from './data/fabrics';
 import { PATTERNS } from './data/patterns';
 import { PRESET_DEMO_CASES } from './data/presetDemos';
 import { SCENES } from './data/scenes';
-import { deconstructRequirement } from './engine/deconstructEngine';
+import { deconstructRequirement, fetchWorkerLlmStatus } from './engine/deconstructEngine';
 import { evaluateDecisionConfiguration, matchDecision } from './engine/decisionMatching';
 import {
   appendDecisionVersion,
@@ -45,17 +45,20 @@ import type { CandidateCombination, Constraint, DecisionRequirement, Revision, R
 import type {
   AuditLogEntry,
   ConfigurationState,
+  DeconstructErrorInfo,
   DeconstructedRequirement,
+  EngineMode,
   LedgerRecord,
   LedgerReviewStatus,
-  LlmSettings,
   PresetDemoCase,
   RequirementInput,
   StylePackId,
+  WorkerLlmStatus,
 } from './types/sartoria';
 import { buildPathname, parsePathname, type AppRoute, type PortalSection } from './utils/router';
 
-const LLM_STORAGE_KEY = 'sartoria_ai_llm_settings_v1';
+const LEGACY_LLM_KEY = 'sartoria_ai_llm_settings_v1';
+const ENGINE_MODE_KEY = 'sartoria_ai_engine_mode_v2';
 const ACTIVE_PROJECT_KEY = 'sartoria_active_decision_project_v1';
 
 function loadActiveProject(): string | null {
@@ -66,19 +69,15 @@ function loadActiveProject(): string | null {
   }
 }
 
-function loadLlmSettings(): LlmSettings {
+function loadSavedEngineMode(): EngineMode | null {
   try {
-    const raw = window.localStorage.getItem(LLM_STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as LlmSettings;
+    window.localStorage.removeItem(LEGACY_LLM_KEY);
+    const value = window.localStorage.getItem(ENGINE_MODE_KEY);
+    if (value === 'online_worker' || value === 'local_rules') return value;
   } catch {
-    // ignore
+    // Use local rules when browser storage is unavailable.
   }
-  return {
-    enabled: false,
-    baseUrl: 'https://api.deepseek.com/v1',
-    apiKey: '',
-    model: 'deepseek-chat',
-  };
+  return null;
 }
 
 function summarizeConfigDiff(prev: ConfigurationState, next: ConfigurationState): string | undefined {
@@ -150,6 +149,7 @@ export default function App() {
   );
   const [analysisStage, setAnalysisStage] = useState<number>(0);
   const [deconstructRunId, setDeconstructRunId] = useState<number>(0);
+  const [deconstructError, setDeconstructError] = useState<DeconstructErrorInfo | null>(null);
 
   const [config, setConfig] = useState<ConfigurationState>(() =>
     initialVersion?.candidate?.config ?? matchDecision(requirement).recommended?.config ?? initialDemo.recommendedConfig);
@@ -164,7 +164,11 @@ export default function App() {
   const [lastArchivedRecordId, setLastArchivedRecordId] = useState<string | null>(initialRecord?.id ?? null);
   const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
   const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
-  const [llmSettings, setLlmSettings] = useState<LlmSettings>(() => loadLlmSettings());
+  const [initialEngineMode] = useState(loadSavedEngineMode);
+  const savedModeRef = useRef(initialEngineMode);
+  const [engineMode, setEngineMode] = useState<EngineMode>(initialEngineMode ?? 'local_rules');
+  const [workerStatus, setWorkerStatus] = useState<WorkerLlmStatus | null>(null);
+  const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [showLlmModal, setShowLlmModal] = useState(false);
   const [showBoundaryModal, setShowBoundaryModal] = useState(false);
 
@@ -177,7 +181,9 @@ export default function App() {
   const history = currentRecord?.decisionHistory ?? emptyDecisionHistory();
   const latestVersion = history.versions.at(-1) ?? null;
 
-  const runLocalInterview = useCallback((nextInput: RequirementInput, previous?: DecisionRequirement) => {
+  const runLocalInterview = useCallback((
+    nextInput: RequirementInput, previous?: DecisionRequirement, presentation?: DeconstructedRequirement,
+  ) => {
     let result = buildLocalDecisionRequirement(nextInput);
     if (previous?.input.rawNarrative === nextInput.rawNarrative) {
       const confirmed = previous.constraints.filter((constraint) => constraint.state === 'confirmed');
@@ -187,7 +193,7 @@ export default function App() {
     }
     const candidate = matchDecision(result).recommended;
     setRequirement(result);
-    setDeconstructed(decisionPresentation(result));
+    setDeconstructed(decisionPresentation(result, presentation));
     if (candidate) setConfig(candidate.config);
     setRevisionPreview(null);
     setDecisionNotice(null);
@@ -196,6 +202,44 @@ export default function App() {
     setCompletedSteps((prev) => ({ ...prev, requirements: true }));
     return result;
   }, []);
+
+  const refreshWorkerStatus = useCallback(async () => {
+    setIsRefreshingStatus(true);
+    try {
+      setWorkerStatus(await fetchWorkerLlmStatus());
+    } finally {
+      setIsRefreshingStatus(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void fetchWorkerLlmStatus().then((status) => {
+      if (!active) return;
+      setWorkerStatus(status);
+      if (!savedModeRef.current && status?.configured && !status.quota.budget.exhausted &&
+          status.quota.visitor.remaining > 0 && status.quota.site.remaining > 0) {
+        setEngineMode('online_worker');
+      }
+    });
+    return () => { active = false; };
+  }, []);
+
+  const handleChangeEngineMode = (mode: EngineMode) => {
+    savedModeRef.current = mode;
+    setEngineMode(mode);
+    setDeconstructError(null);
+    try {
+      window.localStorage.setItem(ENGINE_MODE_KEY, mode);
+    } catch {
+      // The selected mode still applies to this session.
+    }
+  };
+
+  const handleOpenLlmSettings = () => {
+    setShowLlmModal(true);
+    void refreshWorkerStatus();
+  };
 
   const syncIfNeededBeforeLeavingStep1 = useCallback(
     (targetTab: WorkspaceTab) => {
@@ -311,6 +355,7 @@ export default function App() {
 
   const handleChangeInput = (next: RequirementInput) => {
     setInput(next);
+    setDeconstructError(null);
     if (deconstructStatus === 'ready' || deconstructStatus === 'analyzing') {
       deconstructTokenRef.current += 1;
       setDeconstructStatus('stale');
@@ -325,6 +370,7 @@ export default function App() {
     setInput(brief);
     setRequirement(buildLocalDecisionRequirement(brief));
     setDeconstructStatus('idle');
+    setDeconstructError(null);
     setAnalysisStage(0);
     setCompletedSteps({
       requirements: false,
@@ -348,15 +394,16 @@ export default function App() {
     navigate('demo', 'requirements');
   };
 
-  const handleRunDeconstruct = async () => {
+  const handleRunDeconstruct = async (forceMode?: EngineMode) => {
     if (!input.rawNarrative.trim()) return;
+    if (forceMode) handleChangeEngineMode(forceMode);
     const token = ++deconstructTokenRef.current;
 
+    setDeconstructError(null);
     setDeconstructStatus('analyzing');
     setAnalysisStage(1);
 
-    const hasLegacyModel = llmSettings.enabled && llmSettings.apiKey.trim() && llmSettings.baseUrl.trim();
-    const enginePromise = hasLegacyModel ? deconstructRequirement(input, llmSettings) : null;
+    const enginePromise = deconstructRequirement(input, forceMode ?? engineMode);
 
     await waitMs(220);
     if (deconstructTokenRef.current !== token) return;
@@ -366,27 +413,25 @@ export default function App() {
     if (deconstructTokenRef.current !== token) return;
     setAnalysisStage(3);
 
-    await waitMs(240);
+    const [outcome] = await Promise.all([enginePromise, waitMs(240)]);
     if (deconstructTokenRef.current !== token) return;
-    const next = runLocalInterview(input, requirement);
+    const quota = outcome.quota;
+    if (quota) setWorkerStatus((prev) => prev ? { ...prev, quota }
+      : { configured: true, model: quota.model, reasoningEffort: 'low', schemaVersion: 'sartoria_requirement_v1', quota });
+    if (!outcome.ok) {
+      setDeconstructError(outcome.error);
+      setDeconstructStatus(deconstructRunId > 0 ? 'stale' : 'idle');
+      setAnalysisStage(0);
+      return;
+    }
+    const next = runLocalInterview(input, requirement, outcome.data);
 
     appendSessionLog(
       '需求解构',
-      '完成本地需求访谈',
+      '完成需求访谈与目录约束整理',
       `记录 ${next.constraints.filter((constraint) => constraint.level === 'hard').length} 条硬条件，附八项定制信息与六维审美摘要。`
     );
 
-    if (enginePromise) {
-      const legacy = await enginePromise;
-      if (deconstructTokenRef.current !== token) return;
-      if (legacy.engineUsed === 'local_semantic') {
-        setDecisionNotice('可选模型无可用结果，已使用本地规则与人工录入。');
-      } else {
-        setDeconstructed((current) => ({
-          ...current, aestheticArchetype: legacy.aestheticArchetype, emotionTags: legacy.emotionTags,
-        }));
-      }
-    }
   };
 
   const handleEditConstraints = (constraints: Constraint[]) => {
@@ -589,6 +634,7 @@ export default function App() {
     setRevisionPreview(null);
     setDecisionNotice(null);
     setDeconstructStatus('ready');
+    setDeconstructError(null);
     setDeconstructRunId((n) => n + 1);
     setCompletedSteps({
       requirements: true,
@@ -617,15 +663,6 @@ export default function App() {
     navigate('demo', 'requirements');
   };
 
-  const handleSaveLlmSettings = (next: LlmSettings) => {
-    setLlmSettings(next);
-    try {
-      window.localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // ignore
-    }
-  };
-
   return (
     <>
       <TopNav
@@ -633,9 +670,10 @@ export default function App() {
         activeTab={activeTab}
         completedSteps={completedSteps}
         onNavigate={navigate}
-        llmSettings={llmSettings}
+        engineMode={engineMode}
+        workerStatus={workerStatus}
         ledgerCount={ledgerRecords.length}
-        onOpenLlmModal={() => setShowLlmModal(true)}
+        onOpenLlmModal={handleOpenLlmSettings}
         onOpenBoundaryModal={() => setShowBoundaryModal(true)}
       />
 
@@ -661,12 +699,16 @@ export default function App() {
             status={deconstructStatus}
             analysisStage={analysisStage}
             runId={deconstructRunId}
+            engineMode={engineMode}
+            workerStatus={workerStatus}
+            deconstructError={deconstructError}
             decisionRequirement={deconstructStatus === 'ready' ? requirement : undefined}
             onChangeInput={handleChangeInput}
             onEditConstraints={handleEditConstraints}
             onStartNewRequirement={handleStartNewRequirement}
             onSelectPresetDemo={handleSelectPresetDemo}
-            onRunDeconstruct={handleRunDeconstruct}
+            onRunDeconstruct={(mode) => { void handleRunDeconstruct(mode); }}
+            onOpenLlmModal={handleOpenLlmSettings}
             onProceedToConfigurator={() => navigate('demo', 'configurator')}
           />
         )}
@@ -786,8 +828,11 @@ export default function App() {
 
       <LlmConfigModal
         open={showLlmModal}
-        settings={llmSettings}
-        onSave={handleSaveLlmSettings}
+        engineMode={engineMode}
+        workerStatus={workerStatus}
+        isRefreshing={isRefreshingStatus}
+        onChangeMode={handleChangeEngineMode}
+        onRefreshStatus={() => { void refreshWorkerStatus(); }}
         onClose={() => setShowLlmModal(false)}
       />
 

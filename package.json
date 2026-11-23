@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:worker": "wrangler dev",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cf:dry-run": "wrangler deploy --dry-run"
   },
   "dependencies": {
     "framer-motion": "^14.14.0",
@@ -18,6 +20,7 @@
     "three": "^0.187.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261123.1",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -26,6 +29,7 @@
     "oxlint": "^1.90.0",
     "typescript": "~7.0.2",
     "vite": "^8.3.6",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
   }
 }
