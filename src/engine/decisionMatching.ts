@@ -228,6 +228,10 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
   };
 
   function check(constraint: Constraint): AssetEvidence[] {
+    if (constraint.blocking) {
+      return [evidence(teamEvidence(patternAsset), constraint.field, null, 'unknown',
+        `${fieldLabels[constraint.field]}需要人工裁决。${constraint.reason ?? ''}`, constraint.id)];
+    }
     const patternValue = pattern?.profile;
     const fabricValue = fabric?.profile;
     switch (constraint.field) {
@@ -285,13 +289,13 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
     }
   }
 
-  const checks = requirement.constraints.filter((constraint) => constraint.level !== 'pending').map((constraint) => {
+  const checks = requirement.constraints.filter((constraint) => constraint.level !== 'pending' || constraint.blocking).map((constraint) => {
     const items = check(constraint);
     const outcome = items.some((item) => item.outcome === 'conflict') ? 'conflict'
       : items.some((item) => item.outcome === 'unknown') ? 'unknown' : 'satisfies';
     return { constraint, items, outcome };
   });
-  const hard = checks.filter(({ constraint }) => constraint.level === 'hard');
+  const hard = checks.filter(({ constraint }) => constraint.level === 'hard' || constraint.blocking);
   const preferences = checks.filter(({ constraint }) => constraint.level === 'preference' && constraint.value !== null);
   const hardConflicts = hard.filter(({ outcome }) => outcome === 'conflict').length;
   const hardUnknowns = hard.filter(({ outcome }) => outcome === 'unknown').length;

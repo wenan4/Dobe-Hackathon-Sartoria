@@ -27,6 +27,20 @@ function revise(base: Version, feedback: string, option: RevisionOption) {
 }
 
 describe('decision preview and version snapshots', () => {
+  it('keeps combinations out of recommendations while a hard quote needs clarification', () => {
+    const requirement = buildLocalDecisionRequirement(CONFERENCE_BRIEF);
+    const known = matchDecision(requirement);
+    expect(known.status).toBe('matched');
+    const blocked = matchDecision({
+      ...requirement,
+      constraints: requirement.constraints.map((item) => item.field === 'color'
+        ? { ...item, level: 'pending', state: 'unknown', value: null, blocking: true } : item),
+    });
+    expect(blocked.status).toBe('no_match');
+    expect(blocked.recommended).toBeNull();
+    expect(blocked.review[0]?.evidence.some((item) => item.field === 'color' && item.outcome === 'unknown')).toBe(true);
+  });
+
   it('applies two revisions while retaining untouched hard constraints and frozen visuals', () => {
     const v1 = startConference();
     const hard = v1.requirement.constraints.filter((constraint) => constraint.level === 'hard');

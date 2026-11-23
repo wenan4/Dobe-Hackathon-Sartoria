@@ -94,10 +94,7 @@ export function BusinessLedger({
   const draftStatus: LedgerReviewStatus = activeDraft?.status ?? '待业务专员复核';
   const draftNotes = activeDraft?.specialistNotes ?? '';
 
-  const avgMatch =
-    records.length > 0
-      ? Math.round(records.reduce((sum, r) => sum + r.matchScore, 0) / records.length)
-      : 0;
+  const savedVersions = records.reduce((sum, record) => sum + (record.decisionHistory?.versions.length ?? 0), 0);
   const pendingReviewCount = records.filter((r) => r.status !== '已归档').length;
   const totalActions = records.reduce((sum, r) => sum + r.auditLogs.length, 0);
 
@@ -205,8 +202,8 @@ export function BusinessLedger({
           <div className="kpi-num">{pendingReviewCount}</div>
         </div>
         <div className="kpi-card">
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>平均契合度</div>
-          <div className="kpi-num">{avgMatch}%</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>决策版本</div>
+          <div className="kpi-num">{savedVersions}</div>
         </div>
         <div className="kpi-card">
           <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>变更留痕</div>
@@ -224,7 +221,7 @@ export function BusinessLedger({
                 <tr>
                   <th>项目</th>
                   <th>匹配资产</th>
-                  <th>契合度</th>
+                  <th>匹配分</th>
                   <th>状态</th>
                 </tr>
               </thead>
@@ -268,7 +265,7 @@ export function BusinessLedger({
                           fontWeight: 600,
                         }}
                       >
-                        {rec.matchScore}%
+                        {rec.decisionHistory ? rec.matchScore : `${rec.matchScore}% · 旧档`}
                       </td>
                       <td>
                         <span className="meta-badge">{rec.status}</span>

@@ -20,7 +20,7 @@ export function generateProposalDraft(
   deconstructed: DeconstructedRequirement,
   config: ConfigurationState,
   feasibilityNotices: FeasibilityNotice[],
-  matchOverride?: MatchExplanation
+  matchOverride?: Pick<MatchExplanation, 'fabricRationale' | 'similarCaseIds'>
 ): ProposalDraft {
   const pattern = PATTERNS.find((p) => p.id === config.patternId) ?? PATTERNS[0];
   const fabric = FABRICS.find((f) => f.id === config.fabricId) ?? FABRICS[0];

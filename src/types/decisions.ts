@@ -47,6 +47,7 @@ export interface Constraint {
   quote: string | null;
   verifiedBy: string | null;
   reason: string | null;
+  blocking?: true;
 }
 
 export interface ClarificationQuestion {

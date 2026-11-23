@@ -1,8 +1,10 @@
 import { HISTORICAL_CASES } from '../data/cases';
 import { CRAFTS } from '../data/crafts';
+import { ASSET_SOURCE_LABELS, DECISION_CATALOG, SIMULATED_CARE_LABELS } from '../data/decisionCatalog';
 import { FABRICS } from '../data/fabrics';
 import { PATTERNS } from '../data/patterns';
 import { SCENES } from '../data/scenes';
+import type { AssetSource } from '../types/decisions';
 import type { LedgerRecord, ProposalDraft, VisualPromptPack } from '../types/sartoria';
 
 function escapeCsvCell(value: string | number): string {
@@ -55,7 +57,7 @@ export function buildLedgerCsv(records: LedgerRecord[]): string {
       rec.clientName,
       rec.businessType === 'private_couture' ? '高端海派私定' : '团体职业服定制',
       rec.status,
-      `${rec.matchScore}%`,
+      rec.decisionHistory ? `规则匹配分 ${rec.matchScore}` : `${rec.matchScore}%`,
       rec.requirementInput.rawNarrative,
       rec.deconstructed.colorSpecifiedByUser ? '客户已表达色彩倾向（待米样核色）' : '客户未指定颜色（不代客定色）',
       pat ? `${pat.code} ${pat.name}` : rec.config.patternId,
@@ -86,45 +88,55 @@ export function buildAssetCatalogCsv(): string {
     '核心参数',
     '适用规范与说明',
     '数据来源与模拟状态',
+    '资产 ID',
+    '公开资料参考',
   ];
-  const simNote = '模拟静态定制资产（基于上服海派定制案例结构化整理，非真实生产API）';
+  const simNote = (source: AssetSource) => `模拟静态定制资产 · ${ASSET_SOURCE_LABELS[source.kind]} · ${source.reference}`;
 
   const rows: string[][] = [
-    ...PATTERNS.map((p) => [
+    ...DECISION_CATALOG.patterns.map(({ asset: p, profile, source }) => [
       '海派经典版型',
       p.code,
       p.name,
       p.stylePackId,
       `${p.silhouette} | ${p.collarType}`,
-      p.usageStandard,
-      simNote,
+      `${p.usageStandard} | 模拟套数 ${profile.quantity.join('–')} 套`,
+      simNote(source),
+      p.id,
+      '',
     ]),
-    ...FABRICS.map((f) => [
+    ...DECISION_CATALOG.fabrics.map(({ asset: f, profile, source }) => [
       '特色定制面料',
       f.code,
       f.name,
       f.stylePackId,
       `${f.composition} | ${f.gsm}g/m² | ${f.luster}`,
-      f.careAndMoqNote,
-      simNote,
+      `${f.careAndMoqNote} | 模拟洗护 ${profile.care ? SIMULATED_CARE_LABELS[profile.care] : '待核'} | 模拟套数 ${profile.quantity.join('–')} 套`,
+      simNote(source),
+      f.id,
+      (profile.publicReferences ?? []).map((reference) => reference.reference).join(' | '),
     ]),
-    ...CRAFTS.map((c) => [
+    ...DECISION_CATALOG.crafts.map(({ asset: c, profile, source }) => [
       '非遗与经典工艺',
       c.code,
       c.name,
       c.stylePackId,
       `${c.heritageLevel} | ${c.placement} | +${c.extraLeadDays}天`,
-      c.usageStandard,
-      simNote,
+      `${c.usageStandard} | 模拟洗护 ${profile.care ? SIMULATED_CARE_LABELS[profile.care] : '待核'}`,
+      simNote(source),
+      c.id,
+      '',
     ]),
-    ...HISTORICAL_CASES.map((hc) => [
+    ...DECISION_CATALOG.cases.map(({ asset: hc, source }) => [
       '历史标杆案例',
       hc.code,
       hc.title,
       hc.stylePackId,
       `${hc.clientProfile} | ${hc.groupSize}`,
       hc.reviewSummary,
-      simNote,
+      simNote(source),
+      hc.id,
+      '',
     ]),
   ];
 

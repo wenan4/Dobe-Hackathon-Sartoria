@@ -30,7 +30,7 @@ import {
   loadLedgerRecords,
   saveLedgerRecords,
 } from './engine/ledgerStore';
-import { evaluateFeasibility, evaluateMatch } from './engine/matchingEngine';
+import { evaluateFeasibility } from './engine/matchingEngine';
 import { buildClarificationQuestions, buildLocalDecisionRequirement } from './engine/requirementInterview';
 import { resolveStageVisual } from './engine/visualResolver';
 import { AssetKnowledgeBase } from './pages/AssetKnowledgeBase';
@@ -285,7 +285,6 @@ export default function App() {
     return candidate.status === 'eligible' ? candidate : null;
   }, [config, deconstructStatus, requirement]);
   const effectiveInput = useMemo(() => decisionInput(requirement, selectedCandidate), [requirement, selectedCandidate]);
-  const match = useMemo(() => evaluateMatch(effectiveInput, deconstructed, config), [effectiveInput, deconstructed, config]);
   const feasibility = useMemo(
     () => evaluateFeasibility(effectiveInput, config, deconstructed),
     [effectiveInput, config, deconstructed]
@@ -404,15 +403,15 @@ export default function App() {
   const handleUpdateConfig = (
     updater: (prev: ConfigurationState) => ConfigurationState,
     auditNote?: string
-  ) => {
-    if (!input.rawNarrative.trim() || deconstructStatus === 'analyzing') return;
+  ): boolean => {
+    if (!input.rawNarrative.trim() || deconstructStatus === 'analyzing') return false;
     const current = deconstructStatus === 'ready' ? requirement : runLocalInterview(input, requirement);
     const base = deconstructStatus === 'ready' ? config : matchDecision(current).recommended?.config ?? config;
     const next = updater(base);
     const candidate = evaluateDecisionConfiguration(current, next);
     if (candidate.status !== 'eligible') {
       setDecisionNotice(`该组合暂不能选用。${candidate.decisionReasons.join('；')}`);
-      return;
+      return false;
     }
     setConfig(next);
     setDecisionNotice(null);
@@ -422,6 +421,7 @@ export default function App() {
       setCompletedSteps((prev) => ({ ...prev, proposal: false, ledger: false }));
       if (auditNote) appendSessionLog('资源选配', auditNote, '已按当前硬条件核对选配。', '定制业务专员（人工）', diff);
     }
+    return true;
   };
 
   const handleApplyCasePreset = (caseId: string) => {
@@ -465,7 +465,8 @@ export default function App() {
       const stored = prev.find((record) => record.id === version.projectId)?.decisionHistory ?? emptyDecisionHistory();
       const decisionHistory = appendDecisionVersion(stored, version);
       if (decisionHistory === stored) return prev;
-      return [{ ...nextRec, proposal, promptPack, decisionHistory, matchedCaseIds: candidate.referenceCaseIds },
+      return [{ ...nextRec, proposal, promptPack, decisionHistory,
+        matchScore: candidate.ruleScore, matchedCaseIds: candidate.referenceCaseIds },
         ...prev.filter((record) => record.id !== version.projectId)];
     });
     setLastArchivedRecordId(nextRec.id);
@@ -698,8 +699,8 @@ export default function App() {
             input={effectiveInput}
             deconstructed={deconstructed}
             config={config}
-            recommendedPatternId={decisionMatch.recommended?.config.patternId ?? ''}
-            match={match}
+            decisionMatch={decisionMatch}
+            selectedCandidate={selectedCandidate}
             feasibility={feasibility}
             visual={visual}
             promptPack={draftVersion.promptPack}

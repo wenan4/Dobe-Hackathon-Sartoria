@@ -1,18 +1,18 @@
 import { ArrowLeft, ArrowRight, Check, ChevronDown, Copy, Sparkles } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { StageViewport } from '../components/StageViewport';
 import { HISTORICAL_CASES } from '../data/cases';
 import { CRAFTS } from '../data/crafts';
+import { DECISION_CATALOG } from '../data/decisionCatalog';
 import { FABRICS } from '../data/fabrics';
 import { PATTERNS } from '../data/patterns';
 import { SCENES } from '../data/scenes';
-import { curateAssetsForRequirement } from '../engine/matchingEngine';
 import type { ResolvedStageVisual } from '../engine/visualResolver';
+import type { CandidateCombination, MatchResult } from '../types/decisions';
 import type {
   ConfigurationState,
   DeconstructedRequirement,
   FeasibilityNotice,
-  MatchExplanation,
   RequirementInput,
   VisualPromptPack,
 } from '../types/sartoria';
@@ -21,12 +21,12 @@ interface ConfiguratorStudioProps {
   input: RequirementInput;
   deconstructed: DeconstructedRequirement;
   config: ConfigurationState;
-  recommendedPatternId: string;
-  match: MatchExplanation;
+  decisionMatch: MatchResult;
+  selectedCandidate: CandidateCombination;
   feasibility: FeasibilityNotice[];
   visual: ResolvedStageVisual;
   promptPack: VisualPromptPack;
-  onUpdateConfig: (updater: (prev: ConfigurationState) => ConfigurationState, auditNote?: string) => void;
+  onUpdateConfig: (updater: (prev: ConfigurationState) => ConfigurationState, auditNote?: string) => boolean;
   onApplyCasePreset: (caseId: string) => void;
   onBackToRequirements: () => void;
   onSaveAndOpenProposal: () => void;
@@ -36,8 +36,8 @@ export function ConfiguratorStudio({
   input,
   deconstructed,
   config,
-  recommendedPatternId,
-  match,
+  decisionMatch,
+  selectedCandidate,
   feasibility,
   visual,
   promptPack,
@@ -53,33 +53,30 @@ export function ConfiguratorStudio({
   const [changeFeedback, setChangeFeedback] = useState<string | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
 
-  const flashFeedback = (msg: string) => {
-    setChangeFeedback(msg);
+  const flashFeedback = (accepted: boolean, message: string) => {
+    setChangeFeedback(accepted ? message : null);
     if (feedbackTimerRef.current) {
       window.clearTimeout(feedbackTimerRef.current);
     }
-    feedbackTimerRef.current = window.setTimeout(() => setChangeFeedback(null), 1900);
+    feedbackTimerRef.current = accepted ? window.setTimeout(() => setChangeFeedback(null), 1900) : null;
   };
-
-  const curated = useMemo(
-    () => curateAssetsForRequirement(input, deconstructed, config),
-    [input, deconstructed, config]
-  );
 
   const selectedPattern = PATTERNS.find((p) => p.id === config.patternId) ?? PATTERNS[0];
   const selectedFabric = FABRICS.find((f) => f.id === config.fabricId) ?? FABRICS[0];
   const selectedScene = SCENES.find((s) => s.id === config.sceneId) ?? SCENES[0];
   const selectedCrafts = CRAFTS.filter((c) => config.craftIds.includes(c.id));
-
-  const visibleFabrics = showAllFabrics
-    ? [...curated.recommendedFabrics, ...curated.otherFabrics]
-    : curated.recommendedFabrics;
-  const visiblePatterns = showAllPatterns
-    ? [...curated.recommendedPatterns, ...curated.otherPatterns]
-    : curated.recommendedPatterns;
-  const visibleCrafts = showAllCrafts
-    ? [...curated.recommendedCrafts, ...curated.otherCrafts]
-    : curated.recommendedCrafts;
+  const approvedConfigs = [decisionMatch.recommended, decisionMatch.alternative].flatMap((option) => option ? [option.config] : []);
+  const quickFabricIds = new Set([config.fabricId, ...approvedConfigs.map((option) => option.fabricId)]);
+  const quickPatternIds = new Set([config.patternId, ...approvedConfigs.map((option) => option.patternId)]);
+  const matchedSceneIds = [...new Set([config.sceneId, ...approvedConfigs.map((option) => option.sceneId)])];
+  const orderedScenes = SCENES.toSorted((first, second) =>
+    Number(matchedSceneIds.includes(second.id)) - Number(matchedSceneIds.includes(first.id)));
+  const allFabrics = DECISION_CATALOG.fabrics.map(({ asset }) => asset);
+  const allPatterns = DECISION_CATALOG.patterns.map(({ asset }) => asset);
+  const allCrafts = DECISION_CATALOG.crafts.map(({ asset }) => asset);
+  const visibleFabrics = showAllFabrics ? allFabrics : allFabrics.filter((fabric) => quickFabricIds.has(fabric.id));
+  const visiblePatterns = showAllPatterns ? allPatterns : allPatterns.filter((pattern) => quickPatternIds.has(pattern.id));
+  const visibleCrafts = showAllCrafts ? allCrafts : selectedCrafts;
 
   const topNotice =
     feasibility.find((f) => f.level === 'risk') ??
@@ -91,61 +88,59 @@ export function ConfiguratorStudio({
     selectedPattern.baseLeadDays + selectedCrafts.reduce((sum, c) => sum + c.extraLeadDays, 0);
 
   const handleSelectFabric = (fab: (typeof FABRICS)[number]) => {
-    onUpdateConfig(
-      (prev) => ({ ...prev, fabricId: fab.id, focusedHotspotId: null }),
+    const offered = fab.id === config.fabricId ? undefined : approvedConfigs.find((option) => option.fabricId === fab.id);
+    const accepted = onUpdateConfig(
+      (prev) => ({ ...prev, ...offered, fabricId: fab.id, activeView: prev.activeView, focusedHotspotId: null }),
       `选配面料：${fab.shortName}`
     );
-    flashFeedback(`已切换面料 · ${fab.shortName}（${fab.gsm}g/m²）`);
+    flashFeedback(accepted, offered ? `已应用配套版型和工艺 · ${fab.shortName}` : `已切换面料 · ${fab.shortName}（${fab.gsm}g/m²）`);
   };
 
   const handleSelectPattern = (pat: (typeof PATTERNS)[number]) => {
-    onUpdateConfig((prev) => {
-      const nextSceneId = pat.suitableScenes.includes(prev.sceneId)
+    const offered = pat.id === config.patternId ? undefined : approvedConfigs.find((option) => option.patternId === pat.id);
+    const accepted = onUpdateConfig((prev) => {
+      const nextSceneId = offered?.sceneId ?? (pat.suitableScenes.includes(prev.sceneId)
         ? prev.sceneId
-        : pat.suitableScenes[0] ?? prev.sceneId;
-      return { ...prev, patternId: pat.id, sceneId: nextSceneId, focusedHotspotId: null };
+        : pat.suitableScenes[0] ?? prev.sceneId);
+      return { ...prev, ...offered, patternId: pat.id, sceneId: nextSceneId, activeView: prev.activeView, focusedHotspotId: null };
     }, `选配版型：${pat.name}`);
-    flashFeedback(`已切换版型 · ${pat.category}`);
+    flashFeedback(accepted, offered ? `已应用配套面料和工艺 · ${pat.category}` : `已切换版型 · ${pat.category}`);
   };
 
   const handleToggleCraft = (craft: (typeof CRAFTS)[number]) => {
     const exists = config.craftIds.includes(craft.id);
-    onUpdateConfig((prev) => {
+    const accepted = onUpdateConfig((prev) => {
       const has = prev.craftIds.includes(craft.id);
       return {
         ...prev,
         craftIds: has ? prev.craftIds.filter((id) => id !== craft.id) : [...prev.craftIds, craft.id],
       };
     }, `调整工艺：${craft.shortName}`);
-    flashFeedback(exists ? `已移除工艺 · ${craft.shortName}` : `已添加工艺 · ${craft.shortName}`);
+    flashFeedback(accepted, exists ? `已移除工艺 · ${craft.shortName}` : `已添加工艺 · ${craft.shortName}`);
   };
 
   const handleSelectScene = (sceneId: string) => {
     const nextScene = SCENES.find((s) => s.id === sceneId);
-    onUpdateConfig(
+    const accepted = onUpdateConfig(
       (prev) => ({ ...prev, sceneId, activeView: 'scene_look', focusedHotspotId: null }),
       `切换场景至「${nextScene?.shortName ?? sceneId}」`
     );
-    if (nextScene) {
-      flashFeedback(`已切换场景 · ${nextScene.shortName}`);
-    }
+    flashFeedback(accepted, `已切换场景 · ${nextScene?.shortName ?? sceneId}`);
   };
 
   const handleResetToRecommended = () => {
-    const rec = curated.primaryRecommendedConfig;
-    onUpdateConfig(
+    const rec = decisionMatch.recommended?.config;
+    if (!rec) return;
+    const accepted = onUpdateConfig(
       () => ({ ...rec, activeView: config.activeView, focusedHotspotId: null }),
       '恢复按需求推荐的默认搭配'
     );
-    flashFeedback('已恢复当前需求的推荐搭配');
+    flashFeedback(accepted, '已恢复当前需求的推荐搭配');
   };
 
-  const isCustomModified =
-    config.patternId !== curated.primaryRecommendedConfig.patternId ||
-    config.fabricId !== curated.primaryRecommendedConfig.fabricId ||
-    config.sceneId !== curated.primaryRecommendedConfig.sceneId;
+  const isCustomModified = decisionMatch.recommended && selectedCandidate.id !== decisionMatch.recommended.id;
 
-  const similarCases = HISTORICAL_CASES.filter((hc) => match.similarCaseIds.includes(hc.id));
+  const similarCases = HISTORICAL_CASES.filter((hc) => selectedCandidate.referenceCaseIds.includes(hc.id));
 
   return (
     <div className="configurator-grid">
@@ -155,10 +150,10 @@ export function ConfiguratorStudio({
         fabric={selectedFabric}
         crafts={selectedCrafts}
         scene={selectedScene}
-        scenes={curated.orderedScenes}
-        matchedSceneIds={curated.matchedSceneIds}
+        scenes={orderedScenes}
+        matchedSceneIds={matchedSceneIds}
         config={config}
-        match={match}
+        ruleScore={selectedCandidate.ruleScore}
         visual={visual}
         changeFeedback={changeFeedback}
         onChangeView={(view) =>
@@ -191,7 +186,7 @@ export function ConfiguratorStudio({
               {input.projectName}
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4 }}>
-              已按需求筛选适配面料、版型与工艺
+              切换候选面料或版型时会一并应用配套组合
             </div>
           </div>
 
@@ -218,7 +213,7 @@ export function ConfiguratorStudio({
             <div className="fabric-chip-list" role="radiogroup" aria-label="适配面料选择">
               {visibleFabrics.map((fab) => {
                 const active = fab.id === config.fabricId;
-                const isRec = fab.id === curated.primaryRecommendedConfig.fabricId;
+                const isRec = fab.id === decisionMatch.recommended?.config.fabricId;
                 return (
                   <button
                     key={fab.id}
@@ -241,14 +236,14 @@ export function ConfiguratorStudio({
               })}
             </div>
 
-            {curated.otherFabrics.length > 0 && (
+            {allFabrics.length > quickFabricIds.size && (
               <button
                 type="button"
                 className="btn-text"
                 style={{ marginTop: 8, fontSize: 12.5 }}
                 onClick={() => setShowAllFabrics((v) => !v)}
               >
-                <span>{showAllFabrics ? '仅看推荐面料' : `更多面料 (${curated.otherFabrics.length})`}</span>
+                <span>{showAllFabrics ? '仅看候选面料' : `试选更多面料 (${allFabrics.length - quickFabricIds.size})`}</span>
                 <ChevronDown
                   size={13}
                   style={{ transform: showAllFabrics ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}
@@ -273,9 +268,10 @@ export function ConfiguratorStudio({
                 <ChevronDown size={14} />
               </summary>
               <div style={{ fontSize: 12.5, color: 'var(--ink-secondary)', marginTop: 10, lineHeight: 1.65 }}>
-                <div>风格：{match.fabricRationale.styleFit}</div>
-                <div style={{ marginTop: 4 }}>体感：{match.fabricRationale.comfortFit}</div>
-                <div style={{ marginTop: 4 }}>体型：{match.fabricRationale.bodyFit}</div>
+                <div>风格：{selectedCandidate.comparison.style}</div>
+                <div style={{ marginTop: 4 }}>体感：{selectedCandidate.comparison.comfort}</div>
+                <div style={{ marginTop: 4 }}>体型：{selectedCandidate.comparison.fit}</div>
+                <div style={{ marginTop: 4 }}>洗护：{selectedCandidate.comparison.care}</div>
                 <div style={{ marginTop: 6, color: 'var(--ink-muted)' }}>{selectedFabric.composition}</div>
               </div>
             </details>
@@ -304,7 +300,7 @@ export function ConfiguratorStudio({
             <div className="option-stack">
               {visiblePatterns.map((pat) => {
                 const isSelected = pat.id === config.patternId;
-                const isRecommended = pat.id === recommendedPatternId;
+                const isRecommended = pat.id === decisionMatch.recommended?.config.patternId;
                 return (
                   <button
                     key={pat.id}
@@ -325,14 +321,14 @@ export function ConfiguratorStudio({
               })}
             </div>
 
-            {curated.otherPatterns.length > 0 && (
+            {allPatterns.length > quickPatternIds.size && (
               <button
                 type="button"
                 className="btn-text"
                 style={{ marginTop: 8, fontSize: 12.5 }}
                 onClick={() => setShowAllPatterns((v) => !v)}
               >
-                <span>{showAllPatterns ? '仅看推荐版型' : `更多版型 (${curated.otherPatterns.length})`}</span>
+                <span>{showAllPatterns ? '仅看候选版型' : `试选更多版型 (${allPatterns.length - quickPatternIds.size})`}</span>
                 <ChevronDown
                   size={13}
                   style={{ transform: showAllPatterns ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}
@@ -365,14 +361,14 @@ export function ConfiguratorStudio({
               })}
             </div>
 
-            {curated.otherCrafts.length > 0 && (
+            {allCrafts.length > selectedCrafts.length && (
               <button
                 type="button"
                 className="btn-text"
                 style={{ marginTop: 8, fontSize: 12.5 }}
                 onClick={() => setShowAllCrafts((v) => !v)}
               >
-                <span>{showAllCrafts ? '仅看适配工艺' : `更多工艺 (${curated.otherCrafts.length})`}</span>
+                <span>{showAllCrafts ? '仅看已选工艺' : `试选更多工艺 (${allCrafts.length - selectedCrafts.length})`}</span>
                 <ChevronDown
                   size={13}
                   style={{ transform: showAllCrafts ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}
@@ -471,7 +467,7 @@ export function ConfiguratorStudio({
             }}
           >
             <span>参考周期约 {totalRefDays} 工作日</span>
-            <span>契合 {match.overallScore}%</span>
+            <span>规则匹配分 {selectedCandidate.ruleScore}</span>
           </div>
 
           <button type="button" className="btn-black" style={{ width: '100%' }} onClick={onSaveAndOpenProposal}>

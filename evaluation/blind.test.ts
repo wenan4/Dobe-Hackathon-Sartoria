@@ -1,0 +1,462 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { join, resolve } from 'node:path';
+import { expect, test, vi } from 'vitest';
+import { HISTORICAL_CASES } from '../src/data/cases';
+import { CRAFTS } from '../src/data/crafts';
+import { DECISION_CATALOG } from '../src/data/decisionCatalog';
+import { FABRICS } from '../src/data/fabrics';
+import { PATTERNS } from '../src/data/patterns';
+import { SCENES } from '../src/data/scenes';
+import { matchDecision } from '../src/engine/decisionMatching';
+import {
+  appendDecisionVersion, emptyDecisionHistory, previewDecisionRevision, recordDecisionRevision,
+} from '../src/engine/decisionRevisions';
+import { buildDecisionVersion } from '../src/engine/decisionVersion';
+import { loadLedgerRecords, saveLedgerRecords } from '../src/engine/ledgerStore';
+import { buildLocalDecisionRequirement } from '../src/engine/requirementInterview';
+import type { CandidateCombination, DecisionHistory, DecisionRequirement, Version } from '../src/types/decisions';
+import type {
+  ConfigurationState, CraftAsset, DeconstructedRequirement, FabricAsset, FeasibilityNotice, LedgerRecord,
+  PatternAsset, RequirementInput, SceneEnvironment, HistoricalCaseAsset,
+} from '../src/types/sartoria';
+import { buildDecisionExport, buildDecisionMarkdown } from '../src/utils/decisionHandoff';
+import { fixtures, type CatalogExpectation, type Fixture, type FixtureTurn, type Triple } from './fixtures';
+
+const BASELINE = '4e0d95921683fd04cf7834b754b02687d73d56a6';
+const FROZEN_SHA256 = '731df75840720f873ffd0846fbbaac0ebb7d0ca13716d8a42bb51f3d7239943a';
+const RUN_TIME = '2026-11-24T00:00:00.000Z';
+
+type Catalog = {
+  patterns: PatternAsset[];
+  fabrics: FabricAsset[];
+  crafts: CraftAsset[];
+  scenes: SceneEnvironment[];
+  cases: HistoricalCaseAsset[];
+};
+
+function scratchInput(projectName: string, rawNarrative: string): RequirementInput {
+  return {
+    projectName, rawNarrative, clientName: '', businessType: 'private_couture',
+    season: 'all_season', groupSize: '', targetSceneId: '',
+  };
+}
+
+function runBaseline() {
+  const cache = resolve('node_modules/.cache/sartoria-baseline', BASELINE);
+  const source = join(cache, 'source');
+  const compiled = join(cache, 'cjs');
+  const archive = join(cache, 'source.tar');
+  mkdirSync(source, { recursive: true });
+  mkdirSync(compiled, { recursive: true });
+  const gitRoot = resolve('.').replaceAll('\\', '/');
+  const oldSource = [
+    'src/engine/deconstructEngine.ts', 'src/engine/matchingEngine.ts', 'src/data', 'src/types',
+  ];
+  execFileSync('git', ['-c', `safe.directory=${gitRoot}`, 'archive', '--format=tar', `--output=${archive}`, BASELINE, ...oldSource]);
+  execFileSync('tar', ['-xf', archive, '-C', source]);
+
+  const commonJs = '{"type":"commonjs"}';
+  writeFileSync(join(source, 'package.json'), commonJs);
+  writeFileSync(join(compiled, 'package.json'), commonJs);
+  const compiler = resolve('node_modules/typescript/bin/tsc');
+  const tsconfig = join(source, 'tsconfig.json');
+  writeFileSync(tsconfig, JSON.stringify({
+    compilerOptions: {
+      target: 'es2022', module: 'nodenext', rootDir: '.', outDir: compiled, noCheck: true,
+    },
+    include: ['src/**/*.ts'],
+  }));
+  execFileSync(process.execPath, [compiler, '-p', tsconfig]);
+  const load = createRequire(join(compiled, 'package.json'));
+  return {
+    deconstruct: load('./src/engine/deconstructEngine.js').deconstructLocally as
+      (input: RequirementInput) => DeconstructedRequirement,
+    matching: load('./src/engine/matchingEngine.js') as {
+      recommendInitialConfig: (input: RequirementInput, result: DeconstructedRequirement) => ConfigurationState;
+      evaluateFeasibility: (input: RequirementInput, config: ConfigurationState, result: DeconstructedRequirement) => FeasibilityNotice[];
+    },
+    catalog: {
+      patterns: load('./src/data/patterns.js').PATTERNS,
+      fabrics: load('./src/data/fabrics.js').FABRICS,
+      crafts: load('./src/data/crafts.js').CRAFTS,
+      scenes: load('./src/data/scenes.js').SCENES,
+      cases: load('./src/data/cases.js').HISTORICAL_CASES,
+    } as Catalog,
+  };
+}
+
+const tripleKey = ({ field, op, value }: Triple) => JSON.stringify([field, op, value]);
+const hard = (requirement: DecisionRequirement) => requirement.constraints.filter((item) =>
+  item.level === 'hard' && item.state !== 'unknown' && item.value !== null,
+);
+const sameSet = (left: readonly string[], right: readonly string[]) =>
+  JSON.stringify([...new Set(left)].sort()) === JSON.stringify([...new Set(right)].sort());
+
+function hardScore(gold: readonly Triple[], predicted: readonly Triple[]) {
+  const expected = new Map(gold.map((entry) => [tripleKey(entry), entry]));
+  const observed = new Map(predicted.map((entry) => [tripleKey(entry), entry]));
+  const missed = [...expected].filter(([key]) => !observed.has(key)).map(([, item]) => item);
+  const extra = [...observed].filter(([key]) => !expected.has(key)).map(([, item]) => item);
+  return { tp: expected.size - missed.length, fp: extra.length, fn: missed.length, missed, extra };
+}
+
+function normalizeBaseline(deconstructed: DeconstructedRequirement) {
+  const triples: Triple[] = [];
+  const ambiguous: string[] = [];
+  for (const { key, value, provenance } of deconstructed.officialSpecs) {
+    if (provenance !== 'user_explicit') continue;
+    let normalized: string | undefined;
+    if (key === 'category') {
+      normalized = /^两件式套装/.test(value) ? 'two_piece' : /^团体职业套装/.test(value) ? 'suit'
+        : /^高端海派定制长礼服$/.test(value) ? 'dress' : /^外套$/.test(value) ? 'jacket' : undefined;
+    } else if (key === 'color') {
+      normalized = /^深邃墨黛黑底/.test(value) ? 'obsidian' : /^月白烟青浅色系/.test(value) ? 'ivory' : undefined;
+    } else if (key === 'motif') {
+      normalized = /暗花纹样/.test(value) ? 'subtle_jacquard' : undefined;
+    }
+    if (normalized) triples.push({ field: key, op: 'eq', value: normalized });
+    else ambiguous.push(key);
+  }
+  return { triples, ambiguous };
+}
+
+function manualEffort(score: ReturnType<typeof hardScore>, ambiguous: readonly string[] = []) {
+  const corrections = new Set([...score.extra.map(({ field }) => field), ...ambiguous]);
+  const missing = new Set(score.missed.map(({ field }) => field).filter((field) => !corrections.has(field)));
+  return { corrections: corrections.size, missing: missing.size };
+}
+
+const sceneTypes: Readonly<Record<string, readonly string[]>> = {
+  'scene-bund-banquet': ['formal_evening', 'indoor_formal'],
+  'scene-bund-protocol': ['indoor_formal'],
+  'scene-jingan-salon': ['indoor_formal', 'indoor_performance'],
+  'scene-lujiazui-summit': ['indoor_formal'],
+  'scene-outdoor-stage': ['outdoor_stage'],
+};
+
+function legacyFabricType(fabric: FabricAsset) {
+  if (/丝绒/.test(fabric.weave)) return 'velvet';
+  if (/三醋酸/.test(fabric.composition)) return 'acetate';
+  if (/100%.*羊毛/.test(fabric.composition)) return 'wool';
+  if (/100%.*桑蚕丝/.test(fabric.composition)) return 'silk';
+  if (/\d+%.*\/.*\d+%/.test(fabric.composition)) return 'blend';
+  return null;
+}
+
+function auditConfig(config: ConfigurationState, gold: readonly Triple[], catalog: Catalog, old: boolean) {
+  const pat = catalog.patterns.find(({ id }) => id === config.patternId);
+  const fab = catalog.fabrics.find(({ id }) => id === config.fabricId);
+  const crf = config.craftIds.map((id) => catalog.crafts.find((entry) => entry.id === id));
+  const scene = catalog.scenes.find(({ id }) => id === config.sceneId);
+  const unknownId = !pat || !fab || !scene || crf.some((entry) => !entry);
+  if (!pat || !fab) return { unknownId, violations: [], unknowns: [] };
+  const pp = old ? undefined : DECISION_CATALOG.patterns.find(({ asset }) => asset.id === pat.id)?.profile;
+  const fp = old ? undefined : DECISION_CATALOG.fabrics.find(({ asset }) => asset.id === fab.id)?.profile;
+  const sketch = pat.blueprintConfig;
+  const patternKind = sketch.silhouetteType.startsWith('jacket_') ? 'jacket'
+    : sketch.silhouetteType.startsWith('suit_') ? 'suit' : sketch.silhouetteType.startsWith('gown_') ? 'dress'
+      : sketch.silhouetteType === 'stage_two_piece' ? 'two_piece' : null;
+  const legacyCollars = sketch.collarStyle.startsWith('mandarin') ? ['stand']
+    : /lapel|shawl/.test(sketch.collarStyle) ? ['lapel'] : sketch.collarStyle.startsWith('cross') ? ['cross_open'] : ['diagonal'];
+  const fabricCare = fp?.care ?? (/专业.*干洗/.test(fab.careAndMoqNote) ? 'dry_clean' : null);
+  const craftCare = config.craftIds.map((id) => DECISION_CATALOG.crafts.find(({ asset }) => asset.id === id)?.profile.care ?? null);
+  const hideButtons = ['open_no_buttons', 'hidden_placket'].includes(sketch.closureStyle);
+  const vals: Readonly<Record<string, Triple['value'] | readonly Triple['value'][]>> = {
+    businessType: pat.businessType,
+    scene: sceneTypes[config.sceneId] ?? null,
+    season: pat.seasonFit.includes('all_season') ? fab.seasons :
+      fab.seasons.includes('all_season') ? pat.seasonFit : pat.seasonFit.filter((season) => fab.seasons.includes(season)),
+    category: pp?.category ?? patternKind,
+    patternStructure: pp?.patternStructure ?? (pat.silhouette.includes('H 型直身') ? 'h_line' : patternKind === 'two_piece' ? 'two_piece' : null),
+    collar: pp?.collars ?? legacyCollars,
+    fabric: fp?.fabric ?? legacyFabricType(fab),
+    color: fab.colorFamily === 'neutral_silk' ? null : fab.colorFamily,
+    motif: fp?.motif ?? null,
+    lengthRatio: pp?.lengthRatio ?? (sketch.hemLength === 'ankle_two_piece' ? 'ankle' : sketch.hemLength),
+    easeAllowance: pp?.easeAllowance ?? (/抬手|抬臂/.test(pat.easeAllowance) ? 'arm_mobility' : null),
+    closure: hideButtons ? 'no_visible_buttons' : 'visible_buttons',
+    care: fabricCare,
+    luster: fp?.luster ?? (/哑光/.test(fab.luster) ? 'low' : fab.luster === '高雅丝光' ? 'high' : 'medium'),
+    wrinkleResistance: fp?.wrinkleResistance ?? (/抗皱回弹|抗皱回复/.test(fab.description) ? true : null),
+    style: pp?.style ?? (patternKind === 'suit' && pat.id === 'pat-minimal-unstructured-blazer' ? 'modern' : null),
+    craft: config.craftIds,
+  };
+  const violations = new Set<string>();
+  const unknowns = new Set<string>();
+  for (const constraint of gold) {
+    const { field, value, op } = constraint;
+    if (field === 'quantity' && typeof value === 'number') {
+      const ranges = [pp?.quantity, fp?.quantity];
+      if (ranges.some((range) => range && (value < range[0] || value > range[1]))) violations.add(field);
+      if (ranges.some((range) => !range)) unknowns.add(field);
+      continue;
+    }
+    const represented = vals[field];
+    if (represented == null) {
+      unknowns.add(field);
+      continue;
+    }
+    const matches = Array.isArray(represented)
+      ? represented.includes(value) || (field === 'season' && represented.includes('all_season'))
+      : represented === value;
+    if (op === 'eq' ? !matches : matches) violations.add(field);
+    if (!old && field === 'care') {
+      if (craftCare.some((method) => method && (op === 'eq' ? method !== value : method === value))) violations.add(field);
+      if (craftCare.includes(null) || (value === 'machine_wash' && craftCare.length === 0)) unknowns.add(field);
+    }
+  }
+  if (!fab.suitableBusiness.includes(pat.businessType)) violations.add('businessCompatibility');
+  if (!pat.suitableScenes.includes(config.sceneId) || !fab.suitableScenes.includes(config.sceneId)) violations.add('sceneCompatibility');
+  if (fp && !fp.compatiblePatternIds.includes(pat.id)) violations.add('patternFabricCompatibility');
+  if (crf.some((entry) => entry && !entry.compatibleFabrics.includes(fab.weave))) violations.add('craftCompatibility');
+  return { unknownId, violations: [...violations].sort(), unknowns: [...unknowns].sort() };
+}
+
+function auditClaims(candidate: CandidateCombination, catalog: Catalog) {
+  const inLibrary = new Set([
+    ...catalog.patterns, ...catalog.fabrics, ...catalog.crafts, ...catalog.cases, ...catalog.scenes,
+  ].map(({ id }) => id));
+  const outsideReferences = [...candidate.referenceCaseIds, ...candidate.evidence.map(({ assetId }) => assetId)]
+    .filter((id) => !inLibrary.has(id));
+  const suspect = candidate.evidence.filter((entry) => {
+    const asserted = entry.outcome === 'satisfies';
+    if (!asserted) return false;
+    if (entry.kind === 'case') return true;
+    const fabric = DECISION_CATALOG.fabrics.find(({ asset }) => asset.id === entry.assetId);
+    const craft = DECISION_CATALOG.crafts.find(({ asset }) => asset.id === entry.assetId);
+    if (entry.field === 'care') return entry.value == null || entry.value !== (fabric?.profile.care ?? craft?.profile.care);
+    if (entry.field === 'wrinkleResistance') return entry.value !== fabric?.profile.wrinkleResistance;
+    return /compliance|certification/i.test(entry.field);
+  });
+  const claimedCare = /^模拟可低温机洗/.test(candidate.comparison.care) ? 'machine_wash'
+    : /^模拟目录标注专业干洗/.test(candidate.comparison.care) ? 'dry_clean'
+      : /^模拟目录标注手洗/.test(candidate.comparison.care) ? 'hand_wash' : null;
+  const aligned = DECISION_CATALOG.fabrics.find(({ asset }) => asset.id === candidate.config.fabricId)?.profile.care === claimedCare &&
+    candidate.config.craftIds.every((id) => DECISION_CATALOG.crafts.find(({ asset }) => asset.id === id)?.profile.care === claimedCare) &&
+    (claimedCare !== 'machine_wash' || candidate.config.craftIds.length > 0);
+  return { outsideReferences, fakeClaim: suspect.length > 0 || (claimedCare !== null && !aligned) };
+}
+
+function catalogExpectation(expected: CatalogExpectation | undefined, offered: readonly ConfigurationState[]) {
+  if (!expected) return null;
+  if (expected.outcome !== 'eligible') return offered.length === 0;
+  return offered.some((config) => expected.requiredIds?.every((id) =>
+    [config.fabricId, config.patternId, config.sceneId, ...config.craftIds].includes(id),
+  ) ?? true);
+}
+
+function claimSourceCount(requirement: DecisionRequirement) {
+  return hard(requirement).filter((item) => item.quote && requirement.turns.some((turn) =>
+    turn.id === item.sourceTurnId && turn.text.includes(item.quote!),
+  )).length;
+}
+
+function scoreRevisions(fixture: Fixture, initial: Version) {
+  const rows: {
+    turn: string; decision: string; preview: boolean; conflicts: boolean; patch: boolean; stored: boolean;
+    invariant: boolean; preservedExistingHard: boolean; expectedState: boolean; roundTrip: boolean; reason: string | null;
+  }[] = [];
+  let history = appendDecisionVersion(emptyDecisionHistory(), initial);
+  const initiallySaveable = Boolean(initial.candidate);
+  for (const step of fixture.turns.slice(1)) {
+    const revision = step.revision!;
+    const before = history.versions.at(-1)!;
+    const beforeBytes = JSON.stringify(before);
+    history = { ...history, feedbackDraft: step.text };
+    const preview = previewDecisionRevision(before, history.feedbackDraft);
+    const patch = sameSet(preview?.requestedPatch.map(({ field }) => field) ?? [], revision.requestedFields);
+    const conflicts = sameSet(preview?.conflicts.map(({ field }) => field) ?? [], step.conflicts ?? []);
+    const previewSafe = beforeBytes === JSON.stringify(history.versions.at(-1));
+    let stored = false;
+    let reason: string | null = null;
+    if (!preview) {
+      reason = '未生成改稿预览。';
+    } else if (revision.decision === 'cancel') {
+      stored = previewSafe && history.feedbackDraft === step.text;
+    } else {
+      const target = revision.decision === 'apply'
+        ? preview.branches.find((branch) => branch.option === 'accept') ?? preview.branches.find((branch) => branch.option === 'keep')
+        : preview.branches.find((branch) => branch.option === revision.decision);
+      if (!target?.canConfirm) {
+        reason = target?.candidate ? '预览包含组合，但该决策分支无法确认。' : '指定分支无法确认或暂无合格组合。';
+      } else {
+        const action = recordDecisionRevision(preview, target, RUN_TIME);
+        if (revision.decision === 'defer') {
+          history = { ...history, rejectedRevisions: [...history.rejectedRevisions, action] };
+          stored = action.baseVersionId === before.id && action.selectedOption === 'defer' &&
+            history.feedbackDraft === step.text && beforeBytes === JSON.stringify(history.versions.at(-1));
+        } else {
+          const next = buildDecisionVersion({
+            projectId: before.projectId, previous: before, requirement: target.requirement, match: target.match,
+            candidate: target.candidate, revision: action, now: RUN_TIME,
+          });
+          const appended = appendDecisionVersion(history, next);
+          stored = appended.versions.length === history.versions.length + 1 && appended.versions.at(-1)?.id === next.id &&
+            appendDecisionVersion(appended, next) === appended;
+          history = appended;
+        }
+      }
+    }
+    const actual = history.versions.at(-1)!;
+    const actualHard = hard(actual.requirement);
+    const beforeHard = hard(before.requirement);
+    const preservedFields = revision.invariantFields;
+    const preservedExistingHard = preservedFields.every((field) => {
+      const signature = (item: (typeof actualHard)[number]) => JSON.stringify([tripleKey(item), item.sourceTurnId, item.quote]);
+      return sameSet(actualHard.filter((item) => item.field === field).map(signature),
+        beforeHard.filter((item) => item.field === field).map(signature));
+    });
+    const invariant = preservedExistingHard && sameSet(
+      actualHard.filter(({ field }) => preservedFields.includes(field)).map(tripleKey),
+      step.hard.filter(({ field }) => preservedFields.includes(field)).map(tripleKey),
+    );
+    const changedFields = [...new Set([...beforeHard, ...actualHard].map(({ field }) => field))].filter((field) =>
+      !sameSet(beforeHard.filter((item) => item.field === field).map(tripleKey),
+        actualHard.filter((item) => item.field === field).map(tripleKey)),
+    );
+    const expectedState = sameSet(actualHard.map(tripleKey), step.hard.map(tripleKey)) &&
+      sameSet(changedFields, revision.changedFields);
+    const savedParent = history.versions.find(({ id }) => id === actual.parentVersionId) ?? null;
+    saveLedgerRecords([{ id: initial.projectId, decisionHistory: history } as LedgerRecord]);
+    const reopenedHistory: DecisionHistory | undefined = loadLedgerRecords()[0]?.decisionHistory;
+    const reopened = reopenedHistory?.versions.find(({ id }) => id === actual.id);
+    const reopenedParent = reopenedHistory?.versions.find(({ id }) => id === actual.parentVersionId) ?? null;
+    const finalExport = reopened ? buildDecisionExport(reopened, reopenedParent) : null;
+    const roundTrip = Boolean(
+      initiallySaveable && stored && previewSafe && reopened && finalExport &&
+      JSON.stringify(reopenedHistory) === JSON.stringify(history) &&
+      JSON.stringify(finalExport) === JSON.stringify(buildDecisionExport(actual, savedParent)) &&
+      JSON.stringify(finalExport.version) === JSON.stringify(actual) &&
+      buildDecisionMarkdown(reopened, reopenedParent) === buildDecisionMarkdown(actual, savedParent) &&
+      JSON.stringify(reopenedHistory?.versions.find(({ id }) => id === before.id)) === beforeBytes,
+    );
+    rows.push({ turn: step.id, decision: revision.decision, preview: Boolean(preview && previewSafe), patch, conflicts,
+      stored, invariant, preservedExistingHard, expectedState, roundTrip, reason });
+  }
+  return {
+    initiallySaveable, rows,
+    full: rows.every(({ preview, patch, conflicts, stored, invariant, expectedState, roundTrip }) =>
+      preview && patch && conflicts && stored && invariant && expectedState && roundTrip),
+    invariants: rows.every(({ invariant }) => invariant),
+  };
+}
+
+function sum(metrics: readonly { tp: number; fp: number; fn: number }[]) {
+  return metrics.reduce((total, item) => ({
+    tp: total.tp + item.tp, fp: total.fp + item.fp, fn: total.fn + item.fn,
+  }), { tp: 0, fp: 0, fn: 0 });
+}
+
+test('replays the frozen rule-only evaluation and prints auditable results', () => {
+  const frozenText = readFileSync(resolve('evaluation/fixtures.ts'), 'utf8').replaceAll('\r\n', '\n');
+  expect(createHash('sha256').update(frozenText).digest('hex')).toBe(FROZEN_SHA256);
+  expect(fixtures).toHaveLength(24);
+  expect(fixtures.flatMap(({ turns }) => turns)).toHaveLength(36);
+  const revisionCount = fixtures.filter(({ group }) => group === 'multi-round-revisions').length;
+  const baseline = runBaseline();
+  const catalog = { patterns: PATTERNS, fabrics: FABRICS, crafts: CRAFTS, scenes: SCENES, cases: HISTORICAL_CASES };
+  const storage = new Map<string, string>();
+  vi.stubGlobal('window', {
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
+  });
+  try {
+    const rows = fixtures.map((fixture) => {
+      const turn: FixtureTurn = fixture.turns[0];
+      const input = scratchInput(fixture.id, turn.text);
+      const oldResult = baseline.deconstruct(input);
+      const old = normalizeBaseline(oldResult);
+      const oldConfig = baseline.matching.recommendInitialConfig(input, oldResult);
+      const oldNotice = baseline.matching.evaluateFeasibility(input, oldConfig, oldResult);
+      const oldAudit = auditConfig(oldConfig, turn.hard, baseline.catalog, true);
+      const oldUnwarned = oldAudit.violations.filter((field) =>
+        !(field === 'craftCompatibility' && oldNotice.some((notice) => notice.id === 'feas-craft-incompat')),
+      );
+      const requirement = buildLocalDecisionRequirement(input);
+      const observed = hard(requirement);
+      const matching = matchDecision(requirement);
+      const candidates = [matching.recommended, matching.alternative].filter((item) => item !== null);
+      const newAudit = candidates.map((candidate) => ({ id: candidate.id,
+        ...auditConfig(candidate.config, turn.hard, catalog, false), ...auditClaims(candidate, catalog) }));
+      const unclear = (turn.followUpFields ?? []).filter((field) => !requirement.questions.some((question) => question.field === field));
+      const preferred = oldNotice.some((notice) => notice.id === 'feas-craft-ok');
+      const oldScore = hardScore(turn.hard, old.triples);
+      const newScore = hardScore(turn.hard, observed);
+      const unresolvedOverwrites = turn.unknowns.filter(({ field }) => newScore.extra.some((item) =>
+        item.field === field && item.op === 'eq',
+      ));
+      const revision = fixture.group === 'multi-round-revisions'
+        ? scoreRevisions(fixture, buildDecisionVersion({
+          projectId: fixture.id, previous: null, requirement, match: matching, candidate: matching.recommended,
+          revision: null, now: RUN_TIME,
+        }))
+        : null;
+      return {
+        id: fixture.id, group: fixture.group,
+        old: { score: oldScore, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), old.triples.filter((item) => item.op === 'neq')),
+          manual: manualEffort(oldScore, old.ambiguous), unknownId: oldAudit.unknownId, knownViolation: oldUnwarned,
+          fakeClaim: preferred && oldAudit.violations.includes('craftCompatibility'),
+          catalog: catalogExpectation(turn.catalog ?? fixture.catalog, [oldConfig]) },
+        current: { score: newScore, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), observed.filter((item) => item.op === 'neq')),
+          manual: manualEffort(newScore), quoteCount: claimSourceCount(requirement),
+          unknownId: newAudit.some((item) => item.unknownId || item.outsideReferences.length > 0),
+          knownViolation: [...new Set(newAudit.flatMap((item) => item.violations))],
+          unverifiedHard: [...new Set(newAudit.flatMap((item) => item.unknowns))],
+          fakeClaim: newAudit.some((item) => item.fakeClaim),
+          catalog: catalogExpectation(turn.catalog ?? fixture.catalog, candidates.map(({ config }) => config)),
+          matching: matching.status, audit: newAudit, missingFollowUps: unclear, questionCount: requirement.questions.length,
+          unresolvedOverwrites: unresolvedOverwrites.map(({ field }) => field) },
+        revision,
+      };
+    });
+    function totals(variant: 'old' | 'current') {
+      return {
+        hard: sum(rows.map((row) => row[variant].score)), negation: sum(rows.map((row) => row[variant].negation)),
+        corrections: rows.reduce((count, row) => count + row[variant].manual.corrections, 0),
+        missing: rows.reduce((count, row) => count + row[variant].manual.missing, 0),
+        outside: rows.filter((row) => row[variant].unknownId).length,
+        knownViolation: rows.filter((row) => row[variant].knownViolation.length > 0).length,
+        fakeClaim: rows.filter((row) => row[variant].fakeClaim).length,
+        candidateChange: rows.filter((row) => row[variant].knownViolation.length > 0 || row[variant].unknownId || row[variant].fakeClaim).length,
+        catalogPassed: rows.filter((row) => row[variant].catalog === true).length,
+        catalogScored: rows.filter((row) => row[variant].catalog !== null).length,
+      };
+    }
+    const main = buildLocalDecisionRequirement(scratchInput('录屏主故事', '60 套，室内正式，藏青，耐皱，可机洗，不像传统制服。'));
+    const mainExpected: Triple[] = [
+      { field: 'quantity', op: 'eq', value: 60 }, { field: 'scene', op: 'eq', value: 'indoor_formal' },
+      { field: 'color', op: 'eq', value: 'navy' }, { field: 'wrinkleResistance', op: 'eq', value: true },
+      { field: 'care', op: 'eq', value: 'machine_wash' }, { field: 'style', op: 'neq', value: 'traditional_uniform' },
+    ];
+    const report = {
+      baseline: BASELINE, fixtureSha256: FROZEN_SHA256, old: totals('old'), current: totals('current'),
+      sourceQuotes: rows.reduce((count, row) => count + row.current.quoteCount, 0),
+      questionsOverLimit: rows.filter(({ current }) => current.questionCount > 2).length,
+      missingFollowUps: rows.filter(({ current }) => current.missingFollowUps.length > 0).length,
+      unverifiedHard: rows.filter(({ current }) => current.unverifiedHard.length > 0).length,
+      unknownOverwrites: rows.filter(({ current }) => current.unresolvedOverwrites.length > 0).length,
+      revisions: {
+        cases: revisionCount, turns: rows.flatMap(({ revision }) => revision?.rows ?? []).length,
+        invariants: rows.filter(({ revision }) => revision?.invariants).length,
+        full: rows.filter(({ revision }) => revision?.full).length,
+        initiallySaveable: rows.filter(({ revision }) => revision?.initiallySaveable).length,
+        storedRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ roundTrip }) => roundTrip) ?? []).length,
+        preservedExistingHard: rows.flatMap(({ revision }) =>
+          revision?.rows.filter(({ preservedExistingHard }) => preservedExistingHard) ?? [],
+        ).length,
+      },
+      main: { score: hardScore(mainExpected, hard(main)), matching: matchDecision(main).status },
+      rows,
+    };
+    const output = resolve('node_modules/.cache/sartoria-baseline/report.json');
+    writeFileSync(output, JSON.stringify(report, null, 2));
+    console.log(JSON.stringify({ ...report, rows: undefined, fullReport: output }, null, 2));
+  } finally {
+    vi.unstubAllGlobals();
+  }
+}, 30_000);

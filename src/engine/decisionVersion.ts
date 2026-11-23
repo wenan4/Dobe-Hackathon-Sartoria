@@ -10,9 +10,10 @@ import type {
 } from '../types/decisions';
 import type { DeconstructedRequirement, OfficialSpecItem, RequirementInput } from '../types/sartoria';
 import { deconstructLocally } from './deconstructEngine';
-import { evaluateFeasibility, evaluateMatch } from './matchingEngine';
+import { evaluateFeasibility } from './matchingEngine';
 import { generateVisualPromptPack } from './promptEngine';
 import { generateProposalDraft } from './proposalEngine';
+import { describeRequirementValue, requirementFields } from './requirementInterview';
 
 function statement(requirement: DecisionRequirement, field: ConstraintField): Constraint | undefined {
   const known = requirement.constraints.filter((constraint) => constraint.field === field &&
@@ -20,17 +21,6 @@ function statement(requirement: DecisionRequirement, field: ConstraintField): Co
   return known.find((constraint) => constraint.state === 'confirmed') ??
     known.find((constraint) => constraint.state === 'explicit') ?? known[0];
 }
-
-const SPEC_VALUES: Partial<Record<ConstraintField, Record<string, string>>> = {
-  category: { jacket: '外套', two_piece: '两件式套装', suit: '职业套装', dress: '连衣裙' },
-  patternStructure: { h_line: 'H 型直身', two_piece: '两件式' },
-  collar: { cross_open: '交领开襟', stand: '立领', lapel: '驳领' },
-  fabric: { silk: '真丝', blend: '混纺', wool: '羊毛', polyester: '聚酯纤维', acetate: '醋酸', velvet: '丝绒' },
-  color: { navy: '藏青', stone_gray: '石灰色', pine_green: '松墨绿', obsidian: '黑色', ivory: '米白', crimson: '绯红' },
-  motif: { subtle_jacquard: '低调暗纹提花', plain: '净面' },
-  lengthRatio: { mid_hip: '中臀长度', ankle: '及踝', floor: '及地' },
-  easeAllowance: { arm_mobility: '肩背与袖笼保留活动余量，尺寸待版师实测' },
-};
 
 export function decisionInput(requirement: DecisionRequirement, candidate?: CandidateCombination | null): RequirementInput {
   const { input } = requirement;
@@ -59,7 +49,7 @@ export function decisionPresentation(
       return { ...spec, value: '色彩待客户确认', provenance: 'needs_human_verification', sourceNote: '当前需求没有经确认的正向色彩条件。' };
     }
     if (!value) return spec;
-    const label = SPEC_VALUES[spec.key]?.[String(value.value)] ?? String(value.value);
+    const label = describeRequirementValue(spec.key, value.value);
     return {
       ...spec,
       value: value.level === 'preference' ? `${label}（偏好）` : label,
@@ -70,16 +60,15 @@ export function decisionPresentation(
     };
   });
   const originalBuckets = presentation.threeBuckets;
-  const taggedSpecs = originalBuckets.userExplicit.filter((text) => !text.startsWith('色彩') && !text.startsWith('颜色'));
+  const sourcedConstraints = requirement.constraints.filter(({ state }) => state === 'confirmed' || state === 'explicit');
   return {
     ...presentation,
     colorSpecifiedByUser,
     officialSpecs,
     threeBuckets: {
       ...originalBuckets,
-      userExplicit: [...new Set([...taggedSpecs, ...officialSpecs
-        .filter((spec) => spec.provenance === 'user_explicit')
-        .map((spec) => `${spec.label}：${spec.value}`)])],
+      userExplicit: sourcedConstraints.map(({ field, op, value, level }) =>
+        `${requirementFields[field].label}：${op === 'neq' ? '排除 ' : ''}${describeRequirementValue(field, value)}${level === 'preference' ? '（偏好）' : ''}`),
     },
   };
 }
@@ -105,9 +94,7 @@ export function buildDecisionVersion({ projectId, previous, requirement, match, 
     const deconstructed = decisionPresentation(requirement);
     const { config } = approved;
     const feasibility = evaluateFeasibility(input, config, deconstructed);
-    const visualMatch = evaluateMatch(input, deconstructed, config);
     const proposal = generateProposalDraft(input, deconstructed, config, feasibility, {
-      ...visualMatch,
       similarCaseIds: approved.referenceCaseIds,
       fabricRationale: {
         styleFit: approved.comparison.style,
