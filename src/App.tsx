@@ -324,10 +324,10 @@ export default function App() {
 
   const decisionMatch = useMemo(() => matchDecision(requirement), [requirement]);
   const selectedCandidate = useMemo(() => {
-    if (deconstructStatus !== 'ready') return null;
+    if (deconstructStatus !== 'ready' || decisionMatch.status === 'no_match') return null;
     const candidate = evaluateDecisionConfiguration(requirement, config);
     return candidate.status === 'eligible' ? candidate : null;
-  }, [config, deconstructStatus, requirement]);
+  }, [config, decisionMatch.status, deconstructStatus, requirement]);
   const effectiveInput = useMemo(() => decisionInput(requirement, selectedCandidate), [requirement, selectedCandidate]);
   const feasibility = useMemo(
     () => evaluateFeasibility(effectiveInput, config, deconstructed),
@@ -335,8 +335,8 @@ export default function App() {
   );
   const visual = useMemo(() => resolveStageVisual(config), [config]);
   const draftVersion = useMemo(() => {
-    if (!selectedCandidate) return null;
-    if (latestVersion?.candidate?.id === selectedCandidate.id &&
+    if (deconstructStatus !== 'ready' || (!selectedCandidate && decisionMatch.status !== 'no_match')) return null;
+    if (latestVersion && latestVersion.candidate?.id === selectedCandidate?.id &&
         JSON.stringify(latestVersion.requirement) === JSON.stringify(requirement)) {
       return latestVersion;
     }
@@ -351,7 +351,7 @@ export default function App() {
       projectId, previous: latestVersion, requirement, match: decisionMatch,
       candidate: selectedCandidate, revision, now: deconstructed.timestamp,
     });
-  }, [decisionMatch, deconstructed.timestamp, latestVersion, projectId, requirement, selectedCandidate]);
+  }, [decisionMatch, deconstructed.timestamp, deconstructStatus, latestVersion, projectId, requirement, selectedCandidate]);
 
   const handleChangeInput = (next: RequirementInput) => {
     setInput(next);
@@ -487,8 +487,7 @@ export default function App() {
   };
 
   const saveVersionToLedger = (version: Version) => {
-    const { candidate, proposal, promptPack } = version;
-    if (!candidate || !proposal || !promptPack) return;
+    const { candidate } = version;
     const latestInput = decisionInput(version.requirement, candidate);
     const latestPresentation = decisionPresentation(version.requirement);
     const existing = currentRecord;
@@ -499,19 +498,19 @@ export default function App() {
       stylePackId: activeStylePackId,
       input: latestInput,
       deconstructed: latestPresentation,
-      config: candidate.config,
+      config: candidate?.config ?? null,
+      decisionVersion: version,
       specialistNotes: existing?.specialistNotes ?? '',
       status: existing?.status ?? '待业务专员复核',
       existingLogs: [...(existing?.auditLogs ?? []), ...sessionLogs].slice(-20),
-      actionNote: `保存决策 V${version.number} 和交接快照`,
-      actionDiff: existing ? summarizeConfigDiff(existing.config, candidate.config) : undefined,
+      actionNote: candidate ? `保存决策 V${version.number} 和交接快照` : `保存待核决策 V${version.number}`,
+      actionDiff: existing?.config && candidate ? summarizeConfigDiff(existing.config, candidate.config) : undefined,
     });
     setLedgerRecords((prev) => {
       const stored = prev.find((record) => record.id === version.projectId)?.decisionHistory ?? emptyDecisionHistory();
       const decisionHistory = appendDecisionVersion(stored, version);
       if (decisionHistory === stored) return prev;
-      return [{ ...nextRec, proposal, promptPack, decisionHistory,
-        matchScore: candidate.ruleScore, matchedCaseIds: candidate.referenceCaseIds },
+      return [{ ...nextRec, decisionHistory },
         ...prev.filter((record) => record.id !== version.projectId)];
     });
     setLastArchivedRecordId(nextRec.id);
@@ -520,7 +519,7 @@ export default function App() {
       ...prev,
       requirements: true,
       configurator: true,
-      proposal: true,
+      proposal: Boolean(version.proposal),
       ledger: true,
     }));
   };
@@ -577,7 +576,9 @@ export default function App() {
     setInput(branch.requirement.input);
     setDeconstructed(decisionPresentation(branch.requirement));
     if (branch.candidate) setConfig(branch.candidate.config);
-    setDecisionNotice(`已确认并保存 V${updated.number}。可在台账中对比和导出。`);
+    setDecisionNotice(branch.candidate
+      ? `已确认并保存 V${updated.number}。可在台账中对比和导出。`
+      : `已保存待核 V${updated.number}。当前无合格组合，可在台账中导出复核依据。`);
     saveVersionToLedger(updated);
   };
 
@@ -622,8 +623,8 @@ export default function App() {
     const savedVersion = record.decisionHistory?.versions.at(-1);
     const next = savedVersion?.requirement ?? buildLocalDecisionRequirement(record.requirementInput);
     const storedConfig = savedVersion?.candidate?.config ?? record.config;
-    const candidate = evaluateDecisionConfiguration(next, storedConfig);
-    const selected = candidate.status === 'eligible' ? storedConfig : matchDecision(next).recommended?.config;
+    const candidate = storedConfig ? evaluateDecisionConfiguration(next, storedConfig) : null;
+    const selected = candidate?.status === 'eligible' ? storedConfig : matchDecision(next).recommended?.config;
     setProjectId(record.id);
     setActiveStylePackId(record.stylePackId);
     setInput(next.input);
@@ -720,7 +721,7 @@ export default function App() {
               selected={selectedCandidate}
               onSelectCandidate={(candidate: CandidateCombination) => handleUpdateConfig(() => candidate.config, '选择对比组合')}
             />
-            {selectedCandidate && (
+            {draftVersion && (
               <RevisionWorkspace
                 version={latestVersion?.id === draftVersion?.id ? latestVersion : null}
                 feedbackDraft={history.feedbackDraft}
@@ -730,7 +731,8 @@ export default function App() {
                 onPreview={() => latestVersion && setRevisionPreview(previewDecisionRevision(latestVersion, history.feedbackDraft))}
                 onCancelPreview={() => setRevisionPreview(null)}
                 onConfirm={handleConfirmFeedback}
-                canSaveBase={Boolean(draftVersion)}
+                canSaveBase
+                pendingBase={!draftVersion.candidate}
               />
             )}
           </div>
@@ -768,7 +770,7 @@ export default function App() {
 
         {activeSection === 'demo' && (
           (activeTab === 'configurator' && deconstructStatus !== 'ready') ||
-          (activeTab === 'proposal' && !draftVersion)
+          (activeTab === 'proposal' && !draftVersion?.proposal)
         ) && (
           <div className="page-wrap">
             <h1 className="page-h1">{deconstructStatus === 'ready' ? '暂无可交接方案' : '先完成需求访谈'}</h1>
@@ -776,6 +778,7 @@ export default function App() {
             <button type="button" className="btn-outline" onClick={() => navigate('demo', deconstructStatus === 'ready' ? 'configurator' : 'requirements')}>
               {deconstructStatus === 'ready' ? '查看选配依据' : '返回需求访谈'}
             </button>
+            {draftVersion && <button type="button" className="btn-black" onClick={handleArchiveAndOpenLedger}>保存待核档案</button>}
           </div>
         )}
 

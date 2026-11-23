@@ -187,7 +187,10 @@ export function parseRequirementResponse(
 
   return {
     ok: true,
-    requirement: { schemaVersion: REQUIREMENT_SCHEMA_VERSION, mode: 'validated', input, turns, constraints, questions },
+    requirement: {
+      schemaVersion: REQUIREMENT_SCHEMA_VERSION, mode: 'validated', input, turns, questions,
+      constraints: constraints.map((item) => facts.some((fact) => fact.blocking && sameFact(fact, item)) ? { ...item, blocking: true } : item),
+    },
     presentation: { dimensions, aestheticArchetype, emotionTags },
   };
 }

@@ -16,6 +16,7 @@ import { generateProposalDraft } from './proposalEngine';
 import { describeRequirementValue, requirementFields } from './requirementInterview';
 
 function statement(requirement: DecisionRequirement, field: ConstraintField): Constraint | undefined {
+  if (requirement.constraints.some((constraint) => constraint.field === field && constraint.blocking)) return undefined;
   const known = requirement.constraints.filter((constraint) => constraint.field === field &&
     constraint.op === 'eq' && constraint.value !== null && constraint.level !== 'pending');
   return known.find((constraint) => constraint.state === 'confirmed') ??

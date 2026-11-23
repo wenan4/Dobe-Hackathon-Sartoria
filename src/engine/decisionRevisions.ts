@@ -68,8 +68,19 @@ function conflictsWith(a: Constraint, b: Constraint): boolean {
   return a.value === b.value;
 }
 
+function targetsWithdrawal(withdrawal: Constraint, existing: Constraint): boolean {
+  const target = withdrawal.withdraws;
+  return withdrawal.field === existing.field && existing.value !== null &&
+    (!target || target.op === existing.op && target.value === existing.value);
+}
+
 function applyPatch(constraints: Constraint[], requested: Constraint[], verifiedBy: string): Constraint[] {
   return requested.reduce((current, next) => {
+    if (isExplicitWithdrawal(next)) {
+      if (!current.some((item) => targetsWithdrawal(next, item))) return current;
+      return [...current.filter((item) => !targetsWithdrawal(next, item) &&
+        (next.field !== item.field || item.value !== null)), next];
+    }
     const unchanged = current.some((item) => item.field === next.field && item.op === next.op &&
       item.value === next.value && (item.level === next.level || item.level === 'hard'));
     if (unchanged) return current;
@@ -138,11 +149,13 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
       contradictory.add(next.field);
       continue;
     }
-    const existing = constraints.find((item) => item.field === next.field && item.level === 'hard' &&
-      (next.value === null || conflictsWith(item, next)));
+    const withdrawal = isExplicitWithdrawal(next);
+    const existing = constraints.find((item) => item.level === 'hard' &&
+      (withdrawal ? targetsWithdrawal(next, item) : conflictsWith(item, next)));
     if (existing) {
       blocked.add(next.field);
-      conflicts.push({ field: next.field, detail: `现有硬条件「${existing.quote ?? String(existing.value)}」与反馈「${next.quote ?? turn.text}」需要业务员裁决。` });
+      if (!withdrawal) conflicts.push({ field: next.field,
+        detail: `现有硬条件「${existing.quote ?? String(existing.value)}」与反馈「${next.quote ?? turn.text}」需要业务员裁决。` });
     }
     if (requested.some((item) => conflictsWith(item, next))) contradictory.add(next.field);
   }
@@ -159,10 +172,13 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     };
     const match = changes.length > 0 ? matchDecision(requirement) : base.match;
     const candidate = chooseCandidate(base, requirement, match, changes);
+    const recordsRetention = option === 'keep' && blocked.size > 0 && changes.length === 0;
+    const impacts = previewImpacts(base.candidate, candidate, changes);
+    if (recordsRetention) impacts.push({ area: 'requirements', detail: '记录本次反馈，沿用原硬条件和已通过筛选的组合。' });
     return {
       option, requirement, match, candidate, changes,
-      impacts: previewImpacts(base.candidate, candidate, changes),
-      canConfirm: option === 'defer' || (changes.length > 0 && candidate !== null),
+      impacts,
+      canConfirm: option === 'defer' || changes.length > 0 || recordsRetention,
     };
   };
 

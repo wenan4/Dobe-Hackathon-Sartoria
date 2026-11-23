@@ -409,9 +409,9 @@ export interface LedgerRecord {
   matchedCaseIds: string[];
   requirementInput: RequirementInput;
   deconstructed: DeconstructedRequirement;
-  config: ConfigurationState;
-  proposal: ProposalDraft;
-  promptPack: VisualPromptPack;
+  config: ConfigurationState | null;
+  proposal: ProposalDraft | null;
+  promptPack: VisualPromptPack | null;
   specialistNotes: string;
   auditLogs: AuditLogEntry[];
   decisionHistory?: DecisionHistory;

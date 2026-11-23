@@ -38,10 +38,10 @@ export function buildLedgerCsv(records: LedgerRecord[]): string {
   ];
 
   const rows = records.map((rec) => {
-    const pat = PATTERNS.find((p) => p.id === rec.config.patternId);
-    const fab = FABRICS.find((f) => f.id === rec.config.fabricId);
-    const scene = SCENES.find((s) => s.id === rec.config.sceneId);
-    const craftNames = CRAFTS.filter((c) => rec.config.craftIds.includes(c.id))
+    const pat = PATTERNS.find((p) => p.id === rec.config?.patternId);
+    const fab = FABRICS.find((f) => f.id === rec.config?.fabricId);
+    const scene = SCENES.find((s) => s.id === rec.config?.sceneId);
+    const craftNames = CRAFTS.filter((c) => rec.config?.craftIds.includes(c.id))
       .map((c) => `${c.code} ${c.name}`)
       .join(' / ');
     const caseNames = HISTORICAL_CASES.filter((hc) => (rec.matchedCaseIds ?? []).includes(hc.id))
@@ -57,14 +57,14 @@ export function buildLedgerCsv(records: LedgerRecord[]): string {
       rec.clientName,
       rec.businessType === 'private_couture' ? '高端海派私定' : '团体职业服定制',
       rec.status,
-      rec.decisionHistory ? `规则匹配分 ${rec.matchScore}` : `${rec.matchScore}%`,
+      rec.config ? (rec.decisionHistory ? `规则匹配分 ${rec.matchScore}` : `${rec.matchScore}%`) : '待核',
       rec.requirementInput.rawNarrative,
       rec.deconstructed.colorSpecifiedByUser ? '客户已表达色彩倾向（待米样核色）' : '客户未指定颜色（不代客定色）',
-      pat ? `${pat.code} ${pat.name}` : rec.config.patternId,
-      fab ? `${fab.code} ${fab.name}` : rec.config.fabricId,
-      craftNames || '基准工艺',
+      pat ? `${pat.code} ${pat.name}` : rec.config?.patternId ?? '暂无合格组合',
+      fab ? `${fab.code} ${fab.name}` : rec.config?.fabricId ?? '待核',
+      craftNames || (rec.config ? '基准工艺' : '待核'),
       caseNames || '—',
-      scene?.name ?? rec.config.sceneId,
+      scene?.name ?? rec.config?.sceneId ?? '待核',
       rec.deconstructed.emotionTags.join('、'),
       rec.specialistNotes || '（待补充）',
       changeSummary,

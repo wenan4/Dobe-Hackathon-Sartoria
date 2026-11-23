@@ -1,4 +1,5 @@
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
+import type { Version } from '../types/decisions';
 import type {
   AuditLogEntry,
   ConfigurationState,
@@ -33,7 +34,8 @@ export function buildLedgerRecordFromSession(params: {
   stylePackId: StylePackId;
   input: RequirementInput;
   deconstructed: DeconstructedRequirement;
-  config: ConfigurationState;
+  config: ConfigurationState | null;
+  decisionVersion?: Version;
   specialistNotes?: string;
   status?: LedgerReviewStatus;
   existingLogs?: AuditLogEntry[];
@@ -42,16 +44,15 @@ export function buildLedgerRecordFromSession(params: {
   createdAt?: string;
 }): LedgerRecord {
   const now = new Date().toISOString();
-  const match = evaluateMatch(params.input, params.deconstructed, params.config);
-  const feasibility = evaluateFeasibility(params.input, params.config, params.deconstructed);
-  const proposal = generateProposalDraft(
-    params.input,
-    params.deconstructed,
-    params.config,
-    feasibility,
-    match
-  );
-  const promptPack = generateVisualPromptPack(params.input, params.deconstructed, params.config);
+  const { config, decisionVersion, deconstructed, input } = params;
+  const legacyMatch = config && !decisionVersion ? evaluateMatch(input, deconstructed, config) : null;
+  const proposal = config && legacyMatch
+    ? generateProposalDraft(input, deconstructed, config, evaluateFeasibility(input, config, deconstructed), legacyMatch)
+    : decisionVersion?.proposal ?? null;
+  const promptPack = config && !decisionVersion ? generateVisualPromptPack(input, deconstructed, config)
+    : decisionVersion?.promptPack ?? null;
+  const score = decisionVersion?.candidate?.ruleScore ?? legacyMatch?.overallScore ?? 0;
+  const caseIds = decisionVersion?.candidate?.referenceCaseIds ?? legacyMatch?.similarCaseIds ?? [];
 
   const seedTime = params.createdAt ?? now;
   const baseLogs: AuditLogEntry[] =
@@ -71,15 +72,17 @@ export function buildLedgerRecordFromSession(params: {
             timestamp: seedTime,
             stage: '资源选配',
             action: '检索版型/面料/工艺/历史案例四类静态模拟资产',
-            detail: `综合契合 ${match.overallScore}% · 版型 ${params.config.patternId} · 面料 ${params.config.fabricId} · 相似案例 ${match.similarCaseIds.length} 项`,
+            detail: config
+              ? `${decisionVersion ? '规则匹配分' : '综合契合'} ${score} · 版型 ${config.patternId} · 面料 ${config.fabricId} · 相似案例 ${caseIds.length} 项`
+              : '暂无通过硬筛的组合，保留约束和目录核查记录。',
             actor: 'Sartoria AI 助手',
           },
           {
             id: `log-${params.id ?? 'new'}-3`,
             timestamp: now,
             stage: '方案初稿',
-            action: '输出带资源依据与可行性提示的方案初稿及三镜头视觉需求包',
-            detail: `方案编号 ${proposal.id}（AI 参考初稿 · 不做报价/定版/下单）`,
+            action: proposal ? '输出带资源依据与可行性提示的方案初稿及三镜头视觉需求包' : '记录待核决策',
+            detail: proposal ? `方案编号 ${proposal.id}（AI 参考初稿 · 不做报价/定版/下单）` : '等待业务顾问复核需求和可用资产。',
             actor: 'Sartoria AI 助手',
           },
         ];
@@ -111,8 +114,8 @@ export function buildLedgerRecordFromSession(params: {
     createdAt: seedTime,
     updatedAt: now,
     status: params.status ?? '待业务专员复核',
-    matchScore: match.overallScore,
-    matchedCaseIds: match.similarCaseIds,
+    matchScore: score,
+    matchedCaseIds: caseIds,
     requirementInput: params.input,
     deconstructed: params.deconstructed,
     config: params.config,

@@ -48,6 +48,7 @@ export interface Constraint {
   verifiedBy: string | null;
   reason: string | null;
   blocking?: true;
+  withdraws?: { op: 'eq' | 'neq'; value: NonNullable<ConstraintValue> };
 }
 
 export interface ClarificationQuestion {

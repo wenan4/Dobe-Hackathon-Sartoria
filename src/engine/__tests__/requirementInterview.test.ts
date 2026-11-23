@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PRESET_DEMO_CASES } from '../../data/presetDemos';
 import type { RequirementInput } from '../../types/sartoria';
-import { buildLocalDecisionRequirement, extractRevisionConstraints } from '../requirementInterview';
+import { buildLocalDecisionRequirement, extractRevisionConstraints, isExplicitWithdrawal } from '../requirementInterview';
 import { parseRequirementResponse, parseRequirementResponseOrFallback } from '../requirementSchema';
 
 const corporateContext: RequirementInput = {
@@ -16,7 +16,7 @@ function makeModelResponse(input: RequirementInput) {
   const unknown = { value: null, state: 'unknown', level: 'pending', sourceTurnId: null, quote: null, reason: '原话未提及' };
   const dimension = { ...unknown, score: null };
   return {
-    schemaVersion, constraints, questions,
+    schemaVersion, constraints: constraints.map(({ blocking: _blocking, ...constraint }) => constraint), questions,
     dimensions: {
       styleTone: dimension, silhouetteReq: dimension, fabricTexture: dimension,
       craftDetail: dimension, colorSystem: dimension, sceneFit: dimension,
@@ -51,12 +51,14 @@ describe('the offline requirement interview', () => {
     ]);
   });
 
-  it('leaves mutually exclusive demands, ranges and withdrawals pending', () => {
+  it('retains both conflicting quotes and pauses selection for the unresolved color', () => {
     const text = '至少六十套，必须藏青，也不能用藏青，取消机洗';
     const revision = extractRevisionConstraints({ id: 'r-2', text });
     expect(revision).toMatchObject([
       { field: 'quantity', value: null, state: 'unknown', quote: '至少六十套' },
-      { field: 'color', value: null, state: 'unknown', quote: text },
+      { field: 'color', value: 'navy', op: 'eq', level: 'hard', quote: '必须藏青' },
+      { field: 'color', value: 'navy', op: 'neq', level: 'hard', quote: '也不能用藏青' },
+      { field: 'color', value: null, state: 'unknown', quote: text, blocking: true },
       { field: 'care', value: null, state: 'unknown', quote: '取消机洗' },
     ]);
     expect(buildLocalDecisionRequirement({ ...corporateContext, rawNarrative: text }).questions).toHaveLength(2);
@@ -64,6 +66,67 @@ describe('the offline requirement interview', () => {
       { field: 'color', value: 'obsidian', level: 'hard' },
       { field: 'care', value: 'dry_clean', level: 'hard' },
     ]);
+  });
+
+  it('keeps exclusions when alternatives are still open and normalizes a binary closure', () => {
+    const observations = extractRevisionConstraints({
+      id: 'alternatives', text: '不要米白，其他颜色先都可以考虑，门襟不得有明扣。',
+    });
+    expect(observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'color', value: 'ivory', op: 'neq', level: 'hard' }),
+      expect.objectContaining({ field: 'color', value: null, level: 'pending' }),
+      expect.objectContaining({ field: 'closure', value: 'no_visible_buttons', op: 'eq', level: 'hard' }),
+    ]));
+  });
+
+  it('distinguishes outfit pieces from counts and honors an explicit corrected total', () => {
+    const outfit = extractRevisionConstraints({ id: 'outfit', text: '做舞台款，上下两件。' });
+    expect(outfit.find(({ field }) => field === 'patternStructure')?.value).toBe('two_piece');
+    expect(outfit.some(({ field }) => field === 'quantity')).toBe(false);
+    const count = extractRevisionConstraints({ id: 'corrected', text: '不是订十八套，而是十二套。' });
+    expect(count.filter(({ field }) => field === 'quantity')).toMatchObject([{ value: 12, op: 'eq' }]);
+  });
+
+  it('handles compact workplace phrasing and coordinated exclusions without reversing polarity', () => {
+    const observations = extractRevisionConstraints({
+      id: 'workplace',
+      text: '给我们部门统一订做二十四身工作服，室内礼宾接待，色系指定午夜蓝；禁止使用羊毛和真丝；不要送去干洗、还要能放进洗衣机；纽扣不可外露。',
+    });
+    expect(observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'businessType', op: 'eq', value: 'corporate_uniform' }),
+      expect.objectContaining({ field: 'quantity', op: 'eq', value: 24 }),
+      expect.objectContaining({ field: 'scene', op: 'eq', value: 'indoor_formal' }),
+      expect.objectContaining({ field: 'color', op: 'eq', value: 'navy' }),
+      expect.objectContaining({ field: 'fabric', op: 'neq', value: 'wool' }),
+      expect.objectContaining({ field: 'fabric', op: 'neq', value: 'silk' }),
+      expect.objectContaining({ field: 'care', op: 'neq', value: 'dry_clean' }),
+      expect.objectContaining({ field: 'care', op: 'eq', value: 'machine_wash' }),
+      expect.objectContaining({ field: 'closure', op: 'eq', value: 'no_visible_buttons' }),
+    ]));
+  });
+
+  it('guards hard unknowns while leaving absent or explicitly withdrawn fields open', () => {
+    const observations = extractRevisionConstraints({
+      id: 'follow-up', text: '裙长必须过膝，颜色未指定，不强制机洗，领型改成交领其他照旧。',
+    });
+    expect(observations.find(({ field }) => field === 'lengthRatio')).toMatchObject({ state: 'unknown', blocking: true });
+    expect(observations.find(({ field }) => field === 'color')).not.toHaveProperty('blocking');
+    const withdrawal = observations.find(({ field }) => field === 'care')!;
+    expect(isExplicitWithdrawal(withdrawal)).toBe(true);
+    expect(withdrawal).not.toHaveProperty('blocking');
+    expect(observations.find(({ field }) => field === 'collar')).toMatchObject({ value: 'cross_open' });
+  });
+
+  it.each([
+    { text: '单位职业装，通勤套装，套数为８８。', business: 'corporate_uniform', category: 'suit', quantity: 88 },
+    { text: '只给自己订一条礼裙，穿去室内的正式晚宴。', business: 'private_couture', category: 'dress', quantity: 1 },
+  ])('distinguishes explicit recipients, garment categories and counts in $text', ({ text, business, category, quantity }) => {
+    const extracted = extractRevisionConstraints({ id: 'recipient', text });
+    expect(extracted).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'businessType', value: business, state: 'explicit' }),
+      expect.objectContaining({ field: 'category', value: category, state: 'explicit' }),
+      expect.objectContaining({ field: 'quantity', value: quantity, state: 'explicit' }),
+    ]));
   });
 
   it('keeps the official case references separate from explicit fit and item requirements', () => {
@@ -122,5 +185,14 @@ describe('the strict requirement response boundary', () => {
       state: 'suggested', level: 'preference', value: 'navy', reason: '设计建议',
     });
     expect(parseRequirementResponse(chosenColor, input)).toMatchObject({ ok: false });
+  });
+
+  it('derives a blocking hard unknown from trusted raw text after schema validation', () => {
+    const input = { ...corporateContext, rawNarrative: '颜色必须藏青或黑色。' };
+    expect(parseRequirementResponse(makeModelResponse(input), input)).toMatchObject({
+      ok: true, requirement: { constraints: expect.arrayContaining([
+        expect.objectContaining({ field: 'color', state: 'unknown', blocking: true }),
+      ]) },
+    });
   });
 });

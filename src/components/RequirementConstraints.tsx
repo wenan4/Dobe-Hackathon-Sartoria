@@ -36,10 +36,12 @@ function ConstraintEditor({ item, onSave, onCancel }: ConstraintEditorProps) {
     onSave({
       ...item, value: concreteValue, op: concreteOp, level,
       state: level === 'pending' ? 'unknown' : 'confirmed',
+      blocking: level === 'pending' && (item.level === 'hard' || item.blocking) ? true : undefined,
       sourceTurnId: keepSource ? item.sourceTurnId : null,
       quote: keepSource ? item.quote : null,
       verifiedBy: level === 'pending' ? null : '业务顾问',
       reason: level === 'pending' ? '业务顾问将该字段设为待确认。' : null,
+      withdraws: undefined,
     });
   }
 
@@ -47,7 +49,7 @@ function ConstraintEditor({ item, onSave, onCancel }: ConstraintEditorProps) {
     <form className="constraint-editor" aria-label={`编辑${label}`} onSubmit={submit}>
       <label>
         约束级别
-        <select className="clean-select" value={level} onChange={(event) => setLevel(event.target.value as Constraint['level'])}>
+        <select className="clean-select" aria-label="约束级别" value={level} onChange={(event) => setLevel(event.target.value as Constraint['level'])}>
           {groups.map((group) => <option key={group.level} value={group.level}>{group.label}</option>)}
         </select>
       </label>
@@ -55,7 +57,7 @@ function ConstraintEditor({ item, onSave, onCancel }: ConstraintEditorProps) {
         <>
           <label>
             取值方式
-            <select className="clean-select" value={op} onChange={(event) => setOp(event.target.value as Constraint['op'])}>
+            <select className="clean-select" aria-label="取值方式" value={op} onChange={(event) => setOp(event.target.value as Constraint['op'])}>
               <option value="eq">指定</option>
               <option value="neq">排除</option>
             </select>
@@ -63,9 +65,9 @@ function ConstraintEditor({ item, onSave, onCancel }: ConstraintEditorProps) {
           <label>
             {label}
             {item.field === 'quantity' ? (
-              <input className="clean-input" type="number" min="1" step="1" value={selected} onChange={(event) => setSelected(event.target.value)} />
+              <input className="clean-input" aria-label={label} type="number" min="1" step="1" value={selected} onChange={(event) => setSelected(event.target.value)} />
             ) : (
-              <select className="clean-select" value={selected} onChange={(event) => setSelected(event.target.value)}>
+              <select className="clean-select" aria-label={label} value={selected} onChange={(event) => setSelected(event.target.value)}>
                 <option value="">选择{label}</option>
                 {choices.map(([choice, choiceLabel]) => <option key={String(choice)} value={String(choice)}>{choiceLabel}</option>)}
               </select>

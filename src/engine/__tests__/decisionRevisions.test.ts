@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CONFERENCE_BRIEF, CONFERENCE_FEEDBACK } from '../../data/decisionFixtures';
 import type { RevisionOption, Version } from '../../types/decisions';
+import { buildDecisionExport, buildDecisionMarkdown } from '../../utils/decisionHandoff';
+import { buildLedgerCsv } from '../../utils/exporters';
 import { matchDecision } from '../decisionMatching';
 import { appendDecisionVersion, emptyDecisionHistory, previewDecisionRevision, recordDecisionRevision } from '../decisionRevisions';
-import { buildDecisionVersion } from '../decisionVersion';
+import { buildDecisionVersion, decisionPresentation } from '../decisionVersion';
+import { buildLedgerRecordFromSession } from '../ledgerStore';
 import { buildLocalDecisionRequirement } from '../requirementInterview';
 
 function startConference(): Version {
@@ -61,14 +64,28 @@ describe('decision preview and version snapshots', () => {
     expect(v1.candidate?.config.fabricId).toBe('fab-demo-navy-washable-twill');
   });
 
-  it('requires human selection for hard conflicts and declines impossible acceptance', () => {
+  it('allows unresolved requirements to be archived without inventing a proposal', () => {
     const v1 = startConference();
     const direct = previewDecisionRevision(v1, '洗护必须改为干洗，不允许机洗。')!;
     expect(direct.conflicts.some((entry) => entry.field === 'care')).toBe(true);
-    expect(direct.branches.find((entry) => entry.option === 'keep')?.requirement.constraints)
+    const kept = direct.branches.find((entry) => entry.option === 'keep');
+    expect(kept?.canConfirm).toBe(true);
+    expect(kept?.candidate?.id).toBe(v1.candidate?.id);
+    expect(kept?.requirement.constraints)
       .toEqual(expect.arrayContaining(v1.requirement.constraints.filter((constraint) => constraint.field === 'care')));
-    const impossible = previewDecisionRevision(v1, '必须用真丝，机洗不动。')!;
-    expect(impossible.branches.filter((entry) => entry.option !== 'defer').every((entry) => !entry.canConfirm)).toBe(true);
+    const held = revise(v1, '必须用真丝，机洗不动。', 'keep');
+    expect(held.branch.canConfirm).toBe(true);
+    expect(held.version).toMatchObject({ candidate: null, proposal: null, promptPack: null, match: { status: 'no_match' } });
+    expect(held.version.match.recommended).toBeNull();
+    const record = buildLedgerRecordFromSession({
+      id: held.version.projectId, stylePackId: 'shanghai-haipai', input: held.version.requirement.input,
+      deconstructed: decisionPresentation(held.version.requirement), config: null, decisionVersion: held.version,
+    });
+    expect(record).toMatchObject({ config: null, proposal: null, promptPack: null });
+    expect(buildLedgerCsv([record])).toContain('暂无合格组合');
+    const reopened = JSON.parse(JSON.stringify(held.version)) as Version;
+    expect(buildDecisionExport(reopened, v1)).toEqual(buildDecisionExport(held.version, v1));
+    expect(buildDecisionMarkdown(reopened, v1)).toContain('暂无满足硬条件的组合');
     expect(v1.requirement.turns).toHaveLength(1);
   });
 
@@ -86,5 +103,22 @@ describe('decision preview and version snapshots', () => {
     expect(v2.versions).toEqual([v1, first.version]);
     expect(appendDecisionVersion(v2, first.version)).toBe(v2);
     expect(appendDecisionVersion(v2, { ...first.version, projectId: 'another-project', parentVersionId: first.version.id, number: 3 })).toBe(v2);
+  });
+
+  it('withdraws only the named exclusion after explicit confirmation', () => {
+    const input = { ...CONFERENCE_BRIEF, rawNarrative: `${CONFERENCE_BRIEF.rawNarrative}禁止使用羊毛或醋酸。` };
+    const requirement = buildLocalDecisionRequirement(input);
+    const match = matchDecision(requirement);
+    const v1 = buildDecisionVersion({
+      projectId: 'specific-withdrawal', previous: null, requirement, match, candidate: match.recommended, revision: null,
+    });
+    const { preview, branch, version } = revise(v1, '撤回不要羊毛的要求，面料先待选。', 'accept');
+    expect(preview.conflicts).toEqual([]);
+    expect(branch.canConfirm).toBe(true);
+    const exclusions = (entry: Version) => entry.requirement.constraints
+      .filter((item) => item.field === 'fabric' && item.level === 'hard' && item.op === 'neq')
+      .map((item) => item.value);
+    expect(exclusions(v1)).toEqual(['wool', 'acetate']);
+    expect(exclusions(version)).toEqual(['acetate']);
   });
 });

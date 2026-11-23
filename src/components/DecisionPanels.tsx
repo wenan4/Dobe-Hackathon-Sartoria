@@ -189,6 +189,7 @@ interface RevisionWorkspaceProps {
   onCancelPreview: () => void;
   onConfirm: (option: RevisionOption) => void;
   canSaveBase: boolean;
+  pendingBase?: boolean;
 }
 
 function ChangeTable({ changes }: { changes: ConstraintChange[] }) {
@@ -244,26 +245,27 @@ function BranchCard({ branch, version, onConfirm }: { branch: RevisionBranch; ve
         disabled={!branch.canConfirm}
         onClick={() => onConfirm(branch.option)}
       >
-        {isDeferred ? '挂起反馈' : branch.option === 'keep' ? '按原硬条件确认' : '确认并保存新版'}
+        {isDeferred ? '挂起反馈' : !branch.candidate ? '确认条件并保存待核版'
+          : branch.option === 'keep' ? '按原硬条件确认' : '确认并保存新版'}
       </button>
     </article>
   );
 }
 
 export function RevisionWorkspace({
-  version, feedbackDraft, preview, onSaveBase, onChangeDraft, onPreview, onCancelPreview, onConfirm, canSaveBase,
+  version, feedbackDraft, preview, onSaveBase, onChangeDraft, onPreview, onCancelPreview, onConfirm, canSaveBase, pendingBase,
 }: RevisionWorkspaceProps) {
   const feedbackId = useId();
   return (
     <section className="surface-card decision-panel" aria-label="客户改稿">
       <div className="decision-heading">
         <h2>客户改稿</h2>
-        {version && <span className="decision-caption">当前版本 V{version.number}</span>}
+        {version && <span className="decision-caption">当前版本 V{version.number}{version.candidate ? '' : ' · 待核'}</span>}
       </div>
       {!version ? (
         <div className="decision-actions">
-          <p>保存当前需求和组合后，即可对照原版修改。</p>
-          <button type="button" className="btn-black" disabled={!canSaveBase} onClick={onSaveBase}>保存初版</button>
+          <p>{pendingBase ? '可以先保存当前约束和拒绝依据，后续继续复核及改稿。' : '保存当前需求和组合后，即可对照原版修改。'}</p>
+          <button type="button" className="btn-black" disabled={!canSaveBase} onClick={onSaveBase}>{pendingBase ? '保存待核初版' : '保存初版'}</button>
         </div>
       ) : (
         <>
