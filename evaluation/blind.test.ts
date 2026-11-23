@@ -14,12 +14,12 @@ import { matchDecision } from '../src/engine/decisionMatching';
 import {
   appendDecisionVersion, emptyDecisionHistory, previewDecisionRevision, recordDecisionRevision,
 } from '../src/engine/decisionRevisions';
-import { buildDecisionVersion } from '../src/engine/decisionVersion';
-import { loadLedgerRecords, saveLedgerRecords } from '../src/engine/ledgerStore';
+import { buildDecisionVersion, decisionInput, decisionPresentation } from '../src/engine/decisionVersion';
+import { buildLedgerRecordFromSession, loadLedgerRecords, saveLedgerRecords } from '../src/engine/ledgerStore';
 import { buildLocalDecisionRequirement } from '../src/engine/requirementInterview';
 import type { CandidateCombination, DecisionHistory, DecisionRequirement, Version } from '../src/types/decisions';
 import type {
-  ConfigurationState, CraftAsset, DeconstructedRequirement, FabricAsset, FeasibilityNotice, LedgerRecord,
+  ConfigurationState, CraftAsset, DeconstructedRequirement, FabricAsset, FeasibilityNotice,
   PatternAsset, RequirementInput, SceneEnvironment, HistoricalCaseAsset,
 } from '../src/types/sartoria';
 import { buildDecisionExport, buildDecisionMarkdown } from '../src/utils/decisionHandoff';
@@ -254,13 +254,43 @@ function claimSourceCount(requirement: DecisionRequirement) {
   )).length;
 }
 
+function archiveHistory(history: DecisionHistory, version: Version) {
+  const records = loadLedgerRecords();
+  const existing = records.find(({ id }) => id === version.projectId);
+  const record = buildLedgerRecordFromSession({
+    id: version.projectId, projectCode: existing?.projectCode, createdAt: existing?.createdAt,
+    stylePackId: 'shanghai-haipai', input: decisionInput(version.requirement, version.candidate),
+    deconstructed: decisionPresentation(version.requirement), config: version.candidate?.config ?? null,
+    decisionVersion: version, existingLogs: existing?.auditLogs, status: existing?.status,
+  });
+  saveLedgerRecords([{ ...record, decisionHistory: history }, ...records.filter(({ id }) => id !== record.id)]);
+  return loadLedgerRecords().find(({ id }) => id === version.projectId);
+}
+
+function exactArchiveSnapshot(version: Version, record: ReturnType<typeof archiveHistory>) {
+  if (!record) return false;
+  if (!version.candidate) {
+    return version.match.status === 'no_match' && record.config === null && record.proposal === null &&
+      record.promptPack === null && version.proposal === null && version.promptPack === null &&
+      record.matchedCaseIds.length === 0 && record.matchScore === 0;
+  }
+  return JSON.stringify(record.config) === JSON.stringify(version.candidate.config) &&
+    JSON.stringify(record.proposal) === JSON.stringify(version.proposal) &&
+    JSON.stringify(record.promptPack) === JSON.stringify(version.promptPack) &&
+    record.proposal !== null && record.promptPack !== null;
+}
+
 function scoreRevisions(fixture: Fixture, initial: Version) {
   const rows: {
     turn: string; decision: string; preview: boolean; conflicts: boolean; patch: boolean; stored: boolean;
-    invariant: boolean; preservedExistingHard: boolean; expectedState: boolean; roundTrip: boolean; reason: string | null;
+    invariant: boolean; preservedExistingHard: boolean; expectedState: boolean;
+    roundTrip: boolean; archiveRoundTrip: boolean; reviewOnly: boolean; reason: string | null;
   }[] = [];
   let history = appendDecisionVersion(emptyDecisionHistory(), initial);
   const initiallySaveable = Boolean(initial.candidate);
+  const initialArchive = archiveHistory(history, initial);
+  const initialArchiveValid = exactArchiveSnapshot(initial, initialArchive) &&
+    JSON.stringify(initialArchive?.decisionHistory) === JSON.stringify(history);
   for (const step of fixture.turns.slice(1)) {
     const revision = step.revision!;
     const before = history.versions.at(-1)!;
@@ -320,26 +350,31 @@ function scoreRevisions(fixture: Fixture, initial: Version) {
     const expectedState = sameSet(actualHard.map(tripleKey), step.hard.map(tripleKey)) &&
       sameSet(changedFields, revision.changedFields);
     const savedParent = history.versions.find(({ id }) => id === actual.parentVersionId) ?? null;
-    saveLedgerRecords([{ id: initial.projectId, decisionHistory: history } as LedgerRecord]);
-    const reopenedHistory: DecisionHistory | undefined = loadLedgerRecords()[0]?.decisionHistory;
+    const reopenedRecord = archiveHistory(history, actual);
+    const reopenedHistory = reopenedRecord?.decisionHistory;
     const reopened = reopenedHistory?.versions.find(({ id }) => id === actual.id);
     const reopenedParent = reopenedHistory?.versions.find(({ id }) => id === actual.parentVersionId) ?? null;
     const finalExport = reopened ? buildDecisionExport(reopened, reopenedParent) : null;
-    const roundTrip = Boolean(
-      initiallySaveable && stored && previewSafe && reopened && finalExport &&
+    const archiveRoundTrip = Boolean(
+      initialArchiveValid && stored && previewSafe && reopened && finalExport &&
+      exactArchiveSnapshot(actual, reopenedRecord) &&
       JSON.stringify(reopenedHistory) === JSON.stringify(history) &&
       JSON.stringify(finalExport) === JSON.stringify(buildDecisionExport(actual, savedParent)) &&
       JSON.stringify(finalExport.version) === JSON.stringify(actual) &&
       buildDecisionMarkdown(reopened, reopenedParent) === buildDecisionMarkdown(actual, savedParent) &&
       JSON.stringify(reopenedHistory?.versions.find(({ id }) => id === before.id)) === beforeBytes,
     );
+    const roundTrip = archiveRoundTrip && initiallySaveable && Boolean(before.candidate && actual.candidate);
     rows.push({ turn: step.id, decision: revision.decision, preview: Boolean(preview && previewSafe), patch, conflicts,
-      stored, invariant, preservedExistingHard, expectedState, roundTrip, reason });
+      stored, invariant, preservedExistingHard, expectedState, roundTrip, archiveRoundTrip,
+      reviewOnly: !initial.candidate || !before.candidate || !actual.candidate, reason });
   }
+  const stepsCorrect = rows.every(({ preview, patch, conflicts, stored, invariant, expectedState }) =>
+    preview && patch && conflicts && stored && invariant && expectedState);
   return {
-    initiallySaveable, rows,
-    full: rows.every(({ preview, patch, conflicts, stored, invariant, expectedState, roundTrip }) =>
-      preview && patch && conflicts && stored && invariant && expectedState && roundTrip),
+    initiallySaveable, initialArchiveValid, rows,
+    full: stepsCorrect && rows.every(({ roundTrip }) => roundTrip),
+    archiveFull: stepsCorrect && rows.every(({ archiveRoundTrip }) => archiveRoundTrip),
     invariants: rows.every(({ invariant }) => invariant),
   };
 }
@@ -446,6 +481,12 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
         full: rows.filter(({ revision }) => revision?.full).length,
         initiallySaveable: rows.filter(({ revision }) => revision?.initiallySaveable).length,
         storedRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ roundTrip }) => roundTrip) ?? []).length,
+        initialArchives: rows.filter(({ revision }) => revision?.initialArchiveValid).length,
+        archiveFull: rows.filter(({ revision }) => revision?.archiveFull).length,
+        archiveRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ archiveRoundTrip }) => archiveRoundTrip) ?? []).length,
+        reviewOnlyRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ archiveRoundTrip, reviewOnly }) =>
+          archiveRoundTrip && reviewOnly) ?? [],
+        ).length,
         preservedExistingHard: rows.flatMap(({ revision }) =>
           revision?.rows.filter(({ preservedExistingHard }) => preservedExistingHard) ?? [],
         ).length,

@@ -1,6 +1,6 @@
 # YOU-237 离线盲测
 
-评测人先依据客户原话和静态目录手工定标，再冻结 24 条虚构简报。四组各六条，合计 36 轮。首轮有 120 条预期硬约束，其中 7 条是 `neq`。录屏主案例与官方案例六独立验收。样本供评测使用，请勿加入产品规则、提示词、预设或调优例子。[验收任务](https://linear.app/youonlyattendonce/issue/YOU-237) · [参赛版 PRD §5](https://linear.app/youonlyattendonce/document/sartoria-aidobe-fde-参赛版-prd-v20100-人时-ea88e26c2ca4)
+独立评测代理先依据原话和静态目录逐条标注，再冻结 24 条虚构简报。四组各六条，合计 36 轮。首轮有 120 条预期硬约束，其中 7 条是 `neq`。录屏主案例与官方案例六独立验收。样本供评测使用，请勿加入产品规则、提示词、预设或调优例子。[验收任务](https://linear.app/youonlyattendonce/issue/YOU-237) · [参赛版 PRD §5](https://linear.app/youonlyattendonce/document/sartoria-aidobe-fde-参赛版-prd-v20100-人时-ea88e26c2ca4)
 
 - 冻结文件为 `fixtures.ts`。原始 LF 文件的 SHA-256 为 `731df75840720f873ffd0846fbbaac0ebb7d0ca13716d8a42bb51f3d7239943a`。转为 CRLF 的检出应先统一换行为 LF 再校验。
 - `hard` 是当前轮按选定操作处理后的全量硬约束。每条标注含原话摘句与来源轮次。同轮互斥陈述保留两条证据，判定字段冲突并暂停推荐。改稿轮的 `conflicts` 针对预览，未确认前冻结基线不变。
