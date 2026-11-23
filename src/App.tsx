@@ -13,7 +13,11 @@ import { FABRICS } from './data/fabrics';
 import { PATTERNS } from './data/patterns';
 import { PRESET_DEMO_CASES } from './data/presetDemos';
 import { SCENES } from './data/scenes';
-import { deconstructLocally, deconstructRequirement } from './engine/deconstructEngine';
+import {
+  deconstructLocally,
+  deconstructRequirement,
+  fetchWorkerLlmStatus,
+} from './engine/deconstructEngine';
 import {
   buildLedgerRecordFromSession,
   loadLedgerRecords,
@@ -34,31 +38,31 @@ import { VideoShowcase } from './pages/VideoShowcase';
 import type {
   AuditLogEntry,
   ConfigurationState,
+  DeconstructErrorInfo,
   DeconstructedRequirement,
+  EngineMode,
   LedgerRecord,
   LedgerReviewStatus,
-  LlmSettings,
   PresetDemoCase,
   RequirementInput,
   StylePackId,
+  WorkerLlmStatus,
 } from './types/sartoria';
 import { buildPathname, parsePathname, type AppRoute, type PortalSection } from './utils/router';
 
-const LLM_STORAGE_KEY = 'sartoria_ai_llm_settings_v1';
+const LEGACY_LLM_KEY = 'sartoria_ai_llm_settings_v1';
+const ENGINE_MODE_KEY = 'sartoria_ai_engine_mode_v2';
 
-function loadLlmSettings(): LlmSettings {
+function loadSavedEngineMode(): EngineMode | null {
   try {
-    const raw = window.localStorage.getItem(LLM_STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as LlmSettings;
+    // Purge legacy client-side key storage if present (YOU-246)
+    window.localStorage.removeItem(LEGACY_LLM_KEY);
+    const val = window.localStorage.getItem(ENGINE_MODE_KEY);
+    if (val === 'online_worker' || val === 'local_rules') return val;
   } catch {
     // ignore
   }
-  return {
-    enabled: false,
-    baseUrl: 'https://api.deepseek.com/v1',
-    apiKey: '',
-    model: 'deepseek-chat',
-  };
+  return null;
 }
 
 function summarizeConfigDiff(prev: ConfigurationState, next: ConfigurationState): string | undefined {
@@ -136,6 +140,7 @@ export default function App() {
   );
   const [analysisStage, setAnalysisStage] = useState<number>(0);
   const [deconstructRunId, setDeconstructRunId] = useState<number>(0);
+  const [deconstructError, setDeconstructError] = useState<DeconstructErrorInfo | null>(null);
 
   const [config, setConfig] = useState<ConfigurationState>(initialDemo.recommendedConfig);
   const [recommendedPatternId, setRecommendedPatternId] = useState<string>(
@@ -151,7 +156,13 @@ export default function App() {
   const [sessionLogs, setSessionLogs] = useState<AuditLogEntry[]>([]);
   const [ledgerRecords, setLedgerRecords] = useState<LedgerRecord[]>(() => loadLedgerRecords());
   const [lastArchivedRecordId, setLastArchivedRecordId] = useState<string | null>(null);
-  const [llmSettings, setLlmSettings] = useState<LlmSettings>(() => loadLlmSettings());
+
+  const initialSavedMode = typeof window !== 'undefined' ? loadSavedEngineMode() : null;
+  const savedModeRef = useRef<EngineMode | null>(initialSavedMode);
+  const [engineMode, setEngineMode] = useState<EngineMode>(initialSavedMode ?? 'local_rules');
+  const [workerStatus, setWorkerStatus] = useState<WorkerLlmStatus | null>(null);
+  const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
+
   const [showLlmModal, setShowLlmModal] = useState(false);
   const [showBoundaryModal, setShowBoundaryModal] = useState(false);
 
@@ -159,6 +170,44 @@ export default function App() {
 
   const activeSection = route.section;
   const activeTab = route.demoTab;
+
+  const refreshWorkerStatus = useCallback(async (allowAutoSelect: boolean) => {
+    setIsRefreshingStatus(true);
+    try {
+      const st = await fetchWorkerLlmStatus();
+      setWorkerStatus(st);
+      if (allowAutoSelect && !savedModeRef.current && st?.configured && !st.quota.budget.exhausted) {
+        setEngineMode('online_worker');
+      }
+    } finally {
+      setIsRefreshingStatus(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetchWorkerLlmStatus().then((st) => {
+      if (!active) return;
+      setWorkerStatus(st);
+      if (!savedModeRef.current && st?.configured && !st.quota.budget.exhausted) {
+        setEngineMode('online_worker');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleChangeEngineMode = (nextMode: EngineMode) => {
+    setEngineMode(nextMode);
+    savedModeRef.current = nextMode;
+    setDeconstructError(null);
+    try {
+      window.localStorage.setItem(ENGINE_MODE_KEY, nextMode);
+    } catch {
+      // ignore
+    }
+  };
 
   const syncIfNeededBeforeLeavingStep1 = useCallback(
     (targetTab: WorkspaceTab) => {
@@ -267,6 +316,7 @@ export default function App() {
 
   const handleChangeInput = (next: RequirementInput) => {
     setInput(next);
+    setDeconstructError(null);
     if (deconstructStatus === 'ready') {
       setDeconstructStatus('stale');
     }
@@ -276,6 +326,7 @@ export default function App() {
     deconstructTokenRef.current += 1;
     setInput(demo.input);
     setDeconstructStatus('idle');
+    setDeconstructError(null);
     setAnalysisStage(0);
     setCompletedSteps({
       requirements: false,
@@ -295,14 +346,19 @@ export default function App() {
     navigate('demo', 'requirements');
   };
 
-  const handleRunDeconstruct = async () => {
+  const handleRunDeconstruct = async (forceMode?: EngineMode) => {
     if (!input.rawNarrative.trim()) return;
-    const token = ++deconstructTokenRef.current;
+    const effectiveMode = forceMode ?? engineMode;
+    if (forceMode) {
+      handleChangeEngineMode(forceMode);
+    }
 
+    const token = ++deconstructTokenRef.current;
+    setDeconstructError(null);
     setDeconstructStatus('analyzing');
     setAnalysisStage(1);
 
-    const enginePromise = deconstructRequirement(input, llmSettings);
+    const enginePromise = deconstructRequirement(input, effectiveMode);
 
     await waitMs(220);
     if (deconstructTokenRef.current !== token) return;
@@ -312,9 +368,31 @@ export default function App() {
     if (deconstructTokenRef.current !== token) return;
     setAnalysisStage(3);
 
-    const [nextDeconstructed] = await Promise.all([enginePromise, waitMs(240)]);
+    const [outcome] = await Promise.all([enginePromise, waitMs(220)]);
     if (deconstructTokenRef.current !== token) return;
 
+    if (outcome.quota) {
+      setWorkerStatus((prev) =>
+        prev
+          ? { ...prev, quota: outcome.quota! }
+          : {
+              configured: true,
+              model: outcome.quota!.model,
+              reasoningEffort: 'low',
+              schemaVersion: 'sartoria_requirement_v1',
+              quota: outcome.quota!,
+            }
+      );
+    }
+
+    if (!outcome.ok) {
+      setDeconstructError(outcome.error);
+      setDeconstructStatus(deconstructRunId > 0 ? 'stale' : 'idle');
+      setAnalysisStage(0);
+      return;
+    }
+
+    const nextDeconstructed = outcome.data;
     const nextConfig = resolveInitialConfigForInput(input, nextDeconstructed);
     const diffSummary =
       deconstructRunId > 0 ? summarizeConfigDiff(config, nextConfig) : undefined;
@@ -328,7 +406,9 @@ export default function App() {
 
     appendSessionLog(
       '需求解构',
-      '完成自然语言需求智能拆解',
+      nextDeconstructed.engineUsed === 'llm_api'
+        ? `GPT-6.2 Astra 结构化拆解完成`
+        : '本地规则引擎需求拆解完成',
       `输出 8 项专业参数与 6 维审美标签（${nextDeconstructed.colorSpecifiedByUser ? '已识别色彩倾向' : '未指定颜色·留待人工核色'}）`,
       'Sartoria AI 助手',
       diffSummary
@@ -386,7 +466,7 @@ export default function App() {
       specialistNotes: existing?.specialistNotes ?? '',
       status: existing?.status ?? '待业务专员复核',
       existingLogs: [...(existing?.auditLogs ?? []), ...sessionLogs].slice(-20),
-      actionNote: existing ? '同步更新方案初稿与视觉需求包' : '新建台账并完成首轮方案归档',
+      actionNote: existing ? '同步更新方案初稿与绘图提示词' : '新建档案并完成首轮方案归档',
       actionDiff: configDiff,
     });
 
@@ -406,7 +486,7 @@ export default function App() {
   };
 
   const handleSaveAndOpenProposal = () => {
-    appendSessionLog('方案初稿', '生成方案初稿与三镜头视觉需求包', `方案编号 ${proposal.id}`);
+    appendSessionLog('方案初稿', '生成方案初稿与三镜头绘图提示词', `方案编号 ${proposal.id}`);
     setCompletedSteps((prev) => ({ ...prev, requirements: true, configurator: true }));
     navigate('demo', 'proposal');
   };
@@ -458,6 +538,7 @@ export default function App() {
     setConfig(record.config);
     setRecommendedPatternId(record.config.patternId);
     setDeconstructStatus('ready');
+    setDeconstructError(null);
     setDeconstructRunId((n) => n + 1);
     setCompletedSteps({
       requirements: true,
@@ -470,8 +551,8 @@ export default function App() {
         id: `slog-reload-${Date.now()}`,
         timestamp: new Date().toISOString(),
         stage: '资源选配',
-        action: `从台账回载项目「${record.projectCode}」`,
-        detail: '继续调整静态模拟资源并同步追踪变更轨迹',
+        action: `从项目档案回载「${record.projectCode}」`,
+        detail: '继续调整搭配方案并同步追踪变更轨迹',
         actor: '定制业务专员（人工）',
       },
     ]);
@@ -483,15 +564,6 @@ export default function App() {
     navigate('demo', 'requirements');
   };
 
-  const handleSaveLlmSettings = (next: LlmSettings) => {
-    setLlmSettings(next);
-    try {
-      window.localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // ignore
-    }
-  };
-
   return (
     <>
       <TopNav
@@ -499,18 +571,19 @@ export default function App() {
         activeTab={activeTab}
         completedSteps={completedSteps}
         onNavigate={navigate}
-        llmSettings={llmSettings}
+        engineMode={engineMode}
+        workerStatus={workerStatus}
         ledgerCount={ledgerRecords.length}
-        onOpenLlmModal={() => setShowLlmModal(true)}
+        onOpenLlmModal={() => {
+          setShowLlmModal(true);
+          void refreshWorkerStatus(false);
+        }}
         onOpenBoundaryModal={() => setShowBoundaryModal(true)}
       />
 
       <main className="app-main">
         {activeSection === 'home' && (
-          <LandingHome
-            onNavigate={navigate}
-            onLaunchPresetDemo={handleLaunchPresetById}
-          />
+          <LandingHome onNavigate={navigate} onLaunchPresetDemo={handleLaunchPresetById} />
         )}
 
         {activeSection === 'video' && <VideoShowcase onNavigate={navigate} />}
@@ -524,9 +597,18 @@ export default function App() {
             status={deconstructStatus}
             analysisStage={analysisStage}
             runId={deconstructRunId}
+            engineMode={engineMode}
+            workerStatus={workerStatus}
+            deconstructError={deconstructError}
             onChangeInput={handleChangeInput}
             onSelectPresetDemo={handleSelectPresetDemo}
-            onRunDeconstruct={handleRunDeconstruct}
+            onRunDeconstruct={(mode) => {
+              void handleRunDeconstruct(mode);
+            }}
+            onOpenLlmModal={() => {
+              setShowLlmModal(true);
+              void refreshWorkerStatus(false);
+            }}
             onProceedToConfigurator={() => navigate('demo', 'configurator')}
           />
         )}
@@ -610,8 +692,13 @@ export default function App() {
 
       <LlmConfigModal
         open={showLlmModal}
-        settings={llmSettings}
-        onSave={handleSaveLlmSettings}
+        engineMode={engineMode}
+        workerStatus={workerStatus}
+        isRefreshing={isRefreshingStatus}
+        onChangeMode={handleChangeEngineMode}
+        onRefreshStatus={() => {
+          void refreshWorkerStatus(false);
+        }}
         onClose={() => setShowLlmModal(false)}
       />
 

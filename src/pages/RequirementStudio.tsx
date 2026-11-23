@@ -12,10 +12,13 @@ import { RadarChartSVG } from '../components/RadarChartSVG';
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
 import { SCENES } from '../data/scenes';
 import type {
+  DeconstructErrorInfo,
   DeconstructedRequirement,
+  EngineMode,
   PresetDemoCase,
   RequirementInput,
   SpecProvenance,
+  WorkerLlmStatus,
 } from '../types/sartoria';
 
 export type DeconstructStatus = 'idle' | 'analyzing' | 'ready' | 'stale';
@@ -26,9 +29,13 @@ interface RequirementStudioProps {
   status: DeconstructStatus;
   analysisStage: number;
   runId: number;
+  engineMode: EngineMode;
+  workerStatus: WorkerLlmStatus | null;
+  deconstructError: DeconstructErrorInfo | null;
   onChangeInput: (next: RequirementInput) => void;
   onSelectPresetDemo: (demo: PresetDemoCase) => void;
-  onRunDeconstruct: () => void;
+  onRunDeconstruct: (forceMode?: EngineMode) => void;
+  onOpenLlmModal: () => void;
   onProceedToConfigurator: () => void;
 }
 
@@ -50,9 +57,13 @@ export function RequirementStudio({
   status,
   analysisStage,
   runId,
+  engineMode,
+  workerStatus,
+  deconstructError,
   onChangeInput,
   onSelectPresetDemo,
   onRunDeconstruct,
+  onOpenLlmModal,
   onProceedToConfigurator,
 }: RequirementStudioProps) {
   const [outputTab, setOutputTab] = useState<'official8' | 'radar6'>('official8');
@@ -60,11 +71,28 @@ export function RequirementStudio({
   const isAnalyzing = status === 'analyzing';
   const hasResult = status === 'ready' || status === 'stale';
   const categorySpec = deconstructed.officialSpecs.find((s) => s.key === 'category')?.value ?? '定制成衣';
+  const quota = workerStatus?.quota;
 
   return (
     <div className="page-wrap">
       <div className="page-head">
         <h1 className="page-h1">需求拆解</h1>
+        <button type="button" className="meta-badge" onClick={onOpenLlmModal} style={{ cursor: 'pointer' }}>
+          <span
+            className={`status-dot ${
+              engineMode === 'online_worker' && workerStatus?.configured
+                ? quota && (quota.budget.exhausted || quota.visitor.remaining === 0 || quota.site.remaining === 0)
+                  ? 'dot-caution'
+                  : 'dot-pass'
+                : 'dot-info'
+            }`}
+          />
+          <span>
+            {engineMode === 'online_worker' && workerStatus?.configured && quota
+              ? `GPT-6.2 Astra · 今日剩 ${quota.visitor.remaining}/${quota.visitor.limit}`
+              : '本地规则引擎（离线）'}
+          </span>
+        </button>
       </div>
 
       {/* Uniform Case Selector Pills */}
@@ -80,6 +108,35 @@ export function RequirementStudio({
           </button>
         ))}
       </div>
+
+      {/* Clear Server Quota / Budget / Error Feedback with 1-Click Offline Fallback */}
+      {deconstructError && (
+        <div className="notice-row" style={{ marginBottom: 20, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+            <span
+              className={`status-dot ${
+                deconstructError.errorCode === 'BUDGET_EXHAUSTED' ? 'dot-risk' : 'dot-caution'
+              }`}
+            />
+            <div>
+              <div style={{ fontWeight: 500, color: 'var(--ink-primary)' }}>{deconstructError.message}</div>
+              {deconstructError.resetAt && deconstructError.errorCode !== 'BUDGET_EXHAUSTED' && (
+                <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
+                  重置时间：{deconstructError.resetAt}（Asia/Shanghai）
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-outline"
+            style={{ padding: '6px 14px', fontSize: 12.5 }}
+            onClick={() => onRunDeconstruct('local_rules')}
+          >
+            使用本地规则引擎拆解
+          </button>
+        </div>
+      )}
 
       <div className="deconstruct-grid">
         {/* Left: Clean Natural Language Input */}
@@ -110,7 +167,7 @@ export function RequirementStudio({
               type="button"
               className={status === 'ready' ? 'btn-outline' : 'btn-black'}
               disabled={isAnalyzing || !input.rawNarrative.trim()}
-              onClick={onRunDeconstruct}
+              onClick={() => onRunDeconstruct()}
             >
               {isAnalyzing ? (
                 <>
@@ -313,7 +370,9 @@ export function RequirementStudio({
                 <div className="analysis-placeholder-icon">
                   <Loader2 size={18} className="spin-icon" />
                 </div>
-                <div style={{ fontSize: 16, fontWeight: 600 }}>正在拆解需求…</div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>
+                  {engineMode === 'online_worker' ? 'GPT-6.2 Astra 解析中…' : '正在拆解需求…'}
+                </div>
                 <div className="analysis-steps-list">
                   {ANALYSIS_STAGES.map((label, idx) => {
                     const stepNum = idx + 1;
@@ -367,7 +426,7 @@ export function RequirementStudio({
                       type="button"
                       className="btn-outline"
                       style={{ padding: '4px 12px', fontSize: 12 }}
-                      onClick={onRunDeconstruct}
+                      onClick={() => onRunDeconstruct()}
                     >
                       立即更新
                     </button>
@@ -384,9 +443,14 @@ export function RequirementStudio({
                     flexWrap: 'wrap',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span className="status-dot dot-pass" />
                     <h2 style={{ fontSize: 15, fontWeight: 600 }}>拆解结果</h2>
+                    <span className="meta-badge">
+                      {deconstructed.engineUsed === 'llm_api'
+                        ? deconstructed.modelUsed ?? 'gpt-6.2-astra'
+                        : '本地规则引擎'}
+                    </span>
                   </div>
 
                   <div className="segmented segmented-solid" role="tablist">
@@ -425,6 +489,11 @@ export function RequirementStudio({
                             </span>
                           </div>
                           <div className="spec-value">{item.value}</div>
+                          {item.sourceQuote && (
+                            <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                              依据：「{item.sourceQuote}」
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -561,6 +630,17 @@ export function RequirementStudio({
                   </ul>
                 </div>
               </div>
+
+              {deconstructed.followUpQuestions && deconstructed.followUpQuestions.length > 0 && (
+                <div className="sub-card" style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>建议追问</div>
+                  <ul className="bucket-list">
+                    {deconstructed.followUpQuestions.map((q) => (
+                      <li key={q}>{q}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </section>
 
             {/* Step 1 -> Step 2 Handoff Bar */}

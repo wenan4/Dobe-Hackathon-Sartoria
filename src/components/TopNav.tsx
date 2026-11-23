@@ -1,6 +1,6 @@
 import { ArrowUpRight, Check, Cpu, Layers, ShieldCheck } from 'lucide-react';
 import { SITE_CONFIG } from '../data/siteConfig';
-import type { LlmSettings } from '../types/sartoria';
+import type { EngineMode, WorkerLlmStatus } from '../types/sartoria';
 import type { PortalSection } from '../utils/router';
 
 export type WorkspaceTab = 'requirements' | 'configurator' | 'proposal' | 'knowledge' | 'ledger';
@@ -13,7 +13,8 @@ interface TopNavProps {
   activeTab: WorkspaceTab;
   completedSteps: CompletedSteps;
   onNavigate: (section: PortalSection, demoTab?: WorkspaceTab) => void;
-  llmSettings: LlmSettings;
+  engineMode: EngineMode;
+  workerStatus: WorkerLlmStatus | null;
   ledgerCount: number;
   onOpenLlmModal: () => void;
   onOpenBoundaryModal: () => void;
@@ -38,11 +39,20 @@ export function TopNav({
   activeTab,
   completedSteps,
   onNavigate,
-  llmSettings,
+  engineMode,
+  workerStatus,
   ledgerCount,
   onOpenLlmModal,
   onOpenBoundaryModal,
 }: TopNavProps) {
+  const isOnlineActive = engineMode === 'online_worker' && Boolean(workerStatus?.configured);
+  const remainingText =
+    isOnlineActive && workerStatus?.quota
+      ? `GPT-6.2 · ${workerStatus.quota.visitor.remaining}/${workerStatus.quota.visitor.limit}`
+      : engineMode === 'online_worker'
+        ? 'GPT-6.2'
+        : '本地引擎';
+
   return (
     <div className="nav-shell no-print">
       <header className="top-nav">
@@ -67,12 +77,7 @@ export function TopNav({
               <span>{item.label}</span>
             </button>
           ))}
-          <a
-            href={SITE_CONFIG.githubUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="nav-link"
-          >
+          <a href={SITE_CONFIG.githubUrl} target="_blank" rel="noreferrer" className="nav-link">
             <span>GitHub</span>
             <ArrowUpRight size={12} />
           </a>
@@ -82,7 +87,7 @@ export function TopNav({
           {activeSection === 'demo' && (
             <button type="button" className="util-btn" onClick={onOpenLlmModal}>
               <Cpu size={14} strokeWidth={1.6} />
-              <span>{llmSettings.enabled && llmSettings.apiKey ? 'LLM' : '本地引擎'}</span>
+              <span>{remainingText}</span>
             </button>
           )}
           <button type="button" className="util-btn" onClick={onOpenBoundaryModal}>

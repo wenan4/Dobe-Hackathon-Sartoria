@@ -1,12 +1,17 @@
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
 import { SCENES } from '../data/scenes';
 import type {
+  DeconstructErrorInfo,
   DeconstructedRequirement,
+  DeconstructUsageMeta,
   DimensionItem,
-  LlmSettings,
+  EngineMode,
   OfficialSpecItem,
   RequirementInput,
+  SpecProvenance,
   ThreeBucketBreakdown,
+  WorkerLlmStatus,
+  WorkerQuotaSnapshot,
 } from '../types/sartoria';
 
 const SEASON_LABELS: Record<RequirementInput['season'], string> = {
@@ -487,71 +492,248 @@ export function deconstructLocally(input: RequirementInput): DeconstructedRequir
   };
 }
 
+interface WorkerStructuredSpec {
+  key: OfficialSpecItem['key'];
+  label: string;
+  value: string;
+  infoStatus: 'explicit' | 'suggested' | 'unknown';
+  constraintKind: 'hard' | 'soft' | 'excluded' | 'pending';
+  sourceQuote: string | null;
+  rationale: string;
+  ergonomicCue: string | null;
+}
+
+interface WorkerDeconstructSuccessPayload {
+  ok: true;
+  result: {
+    schemaVersion: string;
+    aestheticArchetype: string;
+    emotionTags: string[];
+    colorSpecifiedByUser: boolean;
+    bodyErgonomics: string[];
+    followUpQuestions: string[];
+    officialSpecs: WorkerStructuredSpec[];
+    threeBuckets: ThreeBucketBreakdown;
+  };
+  warnings?: string[];
+  meta?: {
+    model?: string;
+    reasoningEffort?: string;
+    schemaVersion?: string;
+    usage?: {
+      inputTokens: number;
+      cachedTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+    } | null;
+    costUsd?: number;
+    conservativeCostApplied?: boolean;
+  };
+  quota?: WorkerQuotaSnapshot;
+}
+
+interface WorkerErrorPayload {
+  ok: false;
+  errorCode?: string;
+  message?: string;
+  quota?: WorkerQuotaSnapshot;
+}
+
+export type DeconstructCallOutcome =
+  | {
+      ok: true;
+      data: DeconstructedRequirement;
+      quota?: WorkerQuotaSnapshot;
+    }
+  | {
+      ok: false;
+      error: DeconstructErrorInfo;
+      quota?: WorkerQuotaSnapshot;
+    };
+
+function mapInfoStatusToProvenance(status: WorkerStructuredSpec['infoStatus']): SpecProvenance {
+  if (status === 'explicit') return 'user_explicit';
+  if (status === 'unknown') return 'needs_human_verification';
+  return 'system_suggested';
+}
+
+export async function fetchWorkerLlmStatus(): Promise<WorkerLlmStatus | null> {
+  try {
+    const res = await fetch('/api/llm/status', {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Partial<WorkerLlmStatus> & { ok?: boolean };
+    if (!data.ok || !data.quota) return null;
+    return {
+      configured: Boolean(data.configured),
+      model: data.model ?? 'gpt-6.2-astra',
+      reasoningEffort: data.reasoningEffort ?? 'low',
+      schemaVersion: data.schemaVersion ?? 'sartoria_requirement_v1',
+      quota: data.quota,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function deconstructRequirement(
   input: RequirementInput,
-  llmSettings: LlmSettings
-): Promise<DeconstructedRequirement> {
-  const localResult = deconstructLocally(input);
+  mode: EngineMode
+): Promise<DeconstructCallOutcome> {
+  const localBaseline = deconstructLocally(input);
 
-  if (!llmSettings.enabled || !llmSettings.apiKey.trim() || !llmSettings.baseUrl.trim()) {
-    return localResult;
+  if (mode === 'local_rules') {
+    return { ok: true, data: localBaseline };
   }
 
   try {
-    const endpoint = `${llmSettings.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-    const systemPrompt = [
-      '你是上海服装集团 Sartoria AI 定制企划专家。请将客户口语需求转化为严格 JSON，仅输出 JSON 对象。',
-      '字段：{ "aestheticArchetype": string, "emotionTags": string[3-5], "officialSpecs": [{ "key": "category"|"patternStructure"|"collar"|"fabric"|"color"|"motif"|"lengthRatio"|"easeAllowance", "label": string, "value": string, "provenance": "user_explicit"|"system_suggested"|"needs_human_verification", "ergonomicCue"?: string }] }',
-      '严格纪律：1) 把用户明确说的、系统建议的、还要人工核实的分开标注；2) 如果客户没指定颜色，绝不代客确定颜色，必须标记 needs_human_verification；3) 松弛余量只给方向建议，严禁凭空编造具体厘米数值；4) 严禁包含正式报价或承诺交期。',
-    ].join('\n');
-
-    const response = await fetch(endpoint, {
+    const response = await fetch('/api/deconstruct', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${llmSettings.apiKey.trim()}`,
-      },
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: llmSettings.model || 'gpt-4o-mini',
-        temperature: 0.3,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: input.rawNarrative },
-        ],
+        rawNarrative: input.rawNarrative,
+        projectName: input.projectName,
+        clientName: input.clientName,
+        businessType: input.businessType,
+        season: input.season,
+        targetSceneId: input.targetSceneId,
       }),
     });
 
-    if (!response.ok) return localResult;
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const rawContent = payload.choices?.[0]?.message?.content ?? '';
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return localResult;
+    const payload = (await response.json().catch(() => null)) as
+      | WorkerDeconstructSuccessPayload
+      | WorkerErrorPayload
+      | null;
 
-    const parsed = JSON.parse(jsonMatch[0]) as Partial<DeconstructedRequirement>;
-    if (!Array.isArray(parsed.officialSpecs) || parsed.officialSpecs.length !== 8) {
-      return localResult;
+    if (!response.ok || !payload || !payload.ok) {
+      const errPayload = payload && !payload.ok ? payload : null;
+      return {
+        ok: false,
+        error: {
+          errorCode: errPayload?.errorCode ?? `HTTP_${response.status}`,
+          message:
+            errPayload?.message ??
+            '在线 AI 代理服务暂不可用，可切换本地规则引擎继续完成拆解与选配。',
+          resetAt: errPayload?.quota?.resetAt,
+        },
+        quota: errPayload?.quota,
+      };
     }
 
+    const r = payload.result;
+    const mappedSpecs: OfficialSpecItem[] = r.officialSpecs.map((s) => ({
+      key: s.key,
+      label: s.label,
+      value: s.value,
+      provenance: mapInfoStatusToProvenance(s.infoStatus),
+      constraintKind: s.constraintKind,
+      sourceQuote: s.sourceQuote,
+      sourceNote: s.rationale || undefined,
+      ergonomicCue: s.ergonomicCue || undefined,
+    }));
+
+    const specByKey = (k: OfficialSpecItem['key']) =>
+      mappedSpecs.find((s) => s.key === k)?.value ?? '';
+    const scene = SCENES.find((s) => s.id === input.targetSceneId) ?? SCENES[0];
+
+    const dimensions: DimensionItem[] = [
+      {
+        key: 'styleTone',
+        label: '风格调性',
+        value: r.emotionTags.slice(0, 3).join(' · ') || localBaseline.dimensions[0].value,
+        detail: `结合「${specByKey('category')}」定位，由 GPT-6.2 Astra 结构化提取。`,
+        score: 95,
+      },
+      {
+        key: 'silhouetteReq',
+        label: '廓形要求',
+        value: specByKey('patternStructure'),
+        detail: `${specByKey('lengthRatio')}；${specByKey('easeAllowance')}`,
+        score: 96,
+      },
+      {
+        key: 'fabricTexture',
+        label: '面料质感',
+        value: specByKey('fabric'),
+        detail: `匹配「${SEASON_LABELS[input.season]}」穿着体感，实物手感须线下米样核验。`,
+        score: input.season === 'summer' ? 90 : 95,
+      },
+      {
+        key: 'craftDetail',
+        label: '工艺细节',
+        value: `${specByKey('collar')}｜${specByKey('motif')}`,
+        detail:
+          r.bodyErgonomics.length > 0
+            ? r.bodyErgonomics.slice(0, 2).join('；')
+            : localBaseline.dimensions[3].detail,
+        score: 94,
+      },
+      {
+        key: 'colorSystem',
+        label: '色彩体系',
+        value: specByKey('color'),
+        detail: r.colorSpecifiedByUser
+          ? `适配 ${scene.lighting.colorTempLabel}，最终以线下实物米样核色为准。`
+          : '客户未指定颜色，系统不代客定色，留待顾问线下核对实物色卡。',
+        score: r.colorSpecifiedByUser ? 92 : 85,
+      },
+      {
+        key: 'sceneFit',
+        label: '场景适配度',
+        value: `${scene.name}（${scene.formality}）`,
+        detail: scene.backdropHint,
+        score: scene.suitableBusiness.includes(input.businessType) ? 96 : 86,
+      },
+    ];
+
+    const usageMeta: DeconstructUsageMeta | null = payload.meta?.usage
+      ? {
+          inputTokens: payload.meta.usage.inputTokens,
+          cachedTokens: payload.meta.usage.cachedTokens,
+          outputTokens: payload.meta.usage.outputTokens,
+          reasoningTokens: payload.meta.usage.reasoningTokens,
+          costUsd: payload.meta.costUsd ?? 0,
+          conservativeCostApplied: payload.meta.conservativeCostApplied,
+        }
+      : null;
+
     return {
-      ...localResult,
-      engineUsed: 'llm_api',
-      aestheticArchetype: parsed.aestheticArchetype || localResult.aestheticArchetype,
-      emotionTags:
-        Array.isArray(parsed.emotionTags) && parsed.emotionTags.length > 0
-          ? parsed.emotionTags.slice(0, 5)
-          : localResult.emotionTags,
-      officialSpecs: parsed.officialSpecs,
-      threeBuckets: buildFallbackThreeBuckets(
-        input,
-        parsed.officialSpecs,
-        localResult.bodyErgonomics,
-        localResult.colorSpecifiedByUser
-      ),
-      timestamp: new Date().toISOString(),
+      ok: true,
+      quota: payload.quota,
+      data: {
+        engineUsed: 'llm_api',
+        modelUsed: payload.meta?.model ?? 'gpt-6.2-astra',
+        schemaVersion: payload.meta?.schemaVersion ?? r.schemaVersion,
+        summary: '已通过服务端 GPT-6.2 Astra Structured Outputs 完成 8 项专业参数与三类信息边界拆解。',
+        officialSpecs: mappedSpecs,
+        threeBuckets: r.threeBuckets,
+        colorSpecifiedByUser: r.colorSpecifiedByUser,
+        bodyErgonomics: r.bodyErgonomics,
+        followUpQuestions: r.followUpQuestions,
+        validationWarnings: payload.warnings,
+        usageMeta,
+        dimensions,
+        emotionTags: r.emotionTags.slice(0, 5),
+        aestheticArchetype: r.aestheticArchetype,
+        targetAudienceInsight:
+          r.bodyErgonomics.length > 0
+            ? r.bodyErgonomics.join('；')
+            : localBaseline.targetAudienceInsight,
+        extractedKeywords: r.bodyErgonomics,
+        timestamp: new Date().toISOString(),
+      },
     };
   } catch {
-    return localResult;
+    return {
+      ok: false,
+      error: {
+        errorCode: 'NETWORK_ERROR',
+        message: '无法连接本站 Worker API，请检查网络或切换本地规则引擎离线运行。',
+      },
+    };
   }
 }

@@ -1,9 +1,32 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sartoria",
+  "main": "./worker/index.ts",
   "compatibility_date": "2026-11-23",
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
+  },
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "QUOTA_LEDGER",
+        "class_name": "QuotaBudgetLedger"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["QuotaBudgetLedger"]
+    }
+  ]
 }
