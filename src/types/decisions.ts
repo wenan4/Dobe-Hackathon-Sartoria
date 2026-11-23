@@ -138,6 +138,12 @@ export interface Version {
   revision: Revision | null;
 }
 
+export interface DecisionHistory {
+  versions: Version[];
+  rejectedRevisions: Revision[];
+  feedbackDraft: string;
+}
+
 export interface HandoffReview {
   field: string;
   owner: string;

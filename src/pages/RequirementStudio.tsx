@@ -4,13 +4,17 @@ import {
   Check,
   ChevronDown,
   Loader2,
+  Plus,
   RefreshCw,
   Sparkles,
 } from 'lucide-react';
 import { useState } from 'react';
 import { RadarChartSVG } from '../components/RadarChartSVG';
+import { RequirementConstraints } from '../components/RequirementConstraints';
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
 import { SCENES } from '../data/scenes';
+import { describeRequirementValue } from '../engine/requirementInterview';
+import type { Constraint, ConstraintField, DecisionRequirement } from '../types/decisions';
 import type {
   DeconstructedRequirement,
   PresetDemoCase,
@@ -26,6 +30,9 @@ interface RequirementStudioProps {
   status: DeconstructStatus;
   analysisStage: number;
   runId: number;
+  decisionRequirement?: DecisionRequirement;
+  onEditConstraints?: (constraints: Constraint[]) => void;
+  onStartNewRequirement?: () => void;
   onChangeInput: (next: RequirementInput) => void;
   onSelectPresetDemo: (demo: PresetDemoCase) => void;
   onRunDeconstruct: () => void;
@@ -37,6 +44,17 @@ const PROVENANCE_META: Record<SpecProvenance, { label: string; dotClass: string 
   system_suggested: { label: '系统建议', dotClass: 'dot-info' },
   needs_human_verification: { label: '人工核实', dotClass: 'dot-caution' },
 };
+
+const SPEC_STATE_META: Record<Constraint['state'], { label: string; dotClass: string }> = {
+  explicit: PROVENANCE_META.user_explicit,
+  suggested: PROVENANCE_META.system_suggested,
+  unknown: { label: '待确认', dotClass: 'dot-caution' },
+  confirmed: { label: '人工确认', dotClass: 'dot-pass' },
+};
+
+function specText(items: Constraint[]): string {
+  return items.map(({ field, value, op }) => `${op === 'neq' ? '排除 · ' : ''}${describeRequirementValue(field, value)}`).join('、');
+}
 
 const ANALYSIS_STAGES = [
   '识别品类、体态特征与穿着痛点',
@@ -50,6 +68,9 @@ export function RequirementStudio({
   status,
   analysisStage,
   runId,
+  decisionRequirement,
+  onEditConstraints,
+  onStartNewRequirement,
   onChangeInput,
   onSelectPresetDemo,
   onRunDeconstruct,
@@ -59,7 +80,17 @@ export function RequirementStudio({
 
   const isAnalyzing = status === 'analyzing';
   const hasResult = status === 'ready' || status === 'stale';
-  const categorySpec = deconstructed.officialSpecs.find((s) => s.key === 'category')?.value ?? '定制成衣';
+  const byField = (field: ConstraintField) => decisionRequirement?.constraints.filter((item) => item.field === field) ?? [];
+  const dimensions = decisionRequirement ? deconstructed.dimensions.map((dimension) => {
+    const fieldsByDimension: Partial<Record<typeof dimension.key, ConstraintField[]>> = {
+      silhouetteReq: ['patternStructure', 'easeAllowance'], fabricTexture: ['fabric', 'luster'],
+      craftDetail: ['collar', 'motif', 'closure', 'craft'], colorSystem: ['color'], sceneFit: ['scene'],
+    };
+    const fields = fieldsByDimension[dimension.key];
+    if (!fields) return dimension;
+    const values = fields.flatMap(byField).filter(({ value }) => value !== null);
+    return { ...dimension, value: values.length ? specText(values) : '待确认' };
+  }) : deconstructed.dimensions;
 
   return (
     <div className="page-wrap">
@@ -69,6 +100,11 @@ export function RequirementStudio({
 
       {/* Uniform Case Selector Pills */}
       <div className="case-chip-row" role="group" aria-label="预设案例">
+        {onStartNewRequirement && (
+          <button type="button" className="case-pill" onClick={onStartNewRequirement}>
+            <Plus size={13} aria-hidden="true" /> 新建简报
+          </button>
+        )}
         {PRESET_DEMO_CASES.map((demo) => (
           <button
             key={demo.id}
@@ -88,6 +124,7 @@ export function RequirementStudio({
 
           <textarea
             id="req-narrative"
+            aria-label="客户原话"
             className="clean-textarea"
             style={{ minHeight: 176 }}
             value={input.rawNarrative}
@@ -130,7 +167,7 @@ export function RequirementStudio({
               ) : (
                 <>
                   <Sparkles size={14} />
-                  <span>智能拆解需求</span>
+                  <span>拆解需求</span>
                 </>
               )}
             </button>
@@ -272,7 +309,7 @@ export function RequirementStudio({
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>等待拆解需求</div>
                 <p style={{ fontSize: 13.5, color: 'var(--ink-secondary)', maxWidth: 340 }}>
-                  点击左侧「智能拆解需求」，将自然语言转化为定制专业参数与边界清单。
+                  拆解客户原话，查看硬约束、偏好和需要确认的内容。
                 </p>
                 <div className="analysis-steps-list">
                   {ANALYSIS_STAGES.map((label, idx) => (
@@ -414,7 +451,11 @@ export function RequirementStudio({
                 {outputTab === 'official8' ? (
                   <div className="spec-8-grid">
                     {deconstructed.officialSpecs.map((item) => {
-                      const prov = PROVENANCE_META[item.provenance ?? 'system_suggested'];
+                      const constraints = byField(item.key);
+                      const constraint = constraints[0];
+                      const prov = constraint ? SPEC_STATE_META[constraint.state] : PROVENANCE_META[item.provenance ?? 'system_suggested'];
+                      const preserveReferenceCopy = decisionRequirement?.input.presetDemoId === 'official-case-6' && constraint?.state === 'suggested';
+                      const value = decisionRequirement && !preserveReferenceCopy ? specText(constraints) || '待确认' : item.value;
                       return (
                         <div key={item.key} className="spec-cell">
                           <div className="spec-cell-head">
@@ -424,7 +465,7 @@ export function RequirementStudio({
                               <span>{prov.label}</span>
                             </span>
                           </div>
-                          <div className="spec-value">{item.value}</div>
+                          <div className="spec-value">{value}</div>
                         </div>
                       );
                     })}
@@ -440,7 +481,7 @@ export function RequirementStudio({
                         marginBottom: 16,
                       }}
                     >
-                      <RadarChartSVG dimensions={deconstructed.dimensions} />
+                      <RadarChartSVG dimensions={dimensions} />
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <div style={{ fontSize: 14, fontWeight: 600 }}>
                           {deconstructed.aestheticArchetype}
@@ -456,7 +497,7 @@ export function RequirementStudio({
                     </div>
 
                     <div className="spec-8-grid">
-                      {deconstructed.dimensions.map((d) => (
+                      {dimensions.map((d) => (
                         <div key={d.key} className="spec-cell">
                           <div className="spec-cell-head">
                             <span className="spec-label">{d.label}</span>
@@ -495,6 +536,13 @@ export function RequirementStudio({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.28, delay: 0.05, ease: [0.25, 0.1, 0.25, 1] }}
           >
+            {decisionRequirement ? (
+              <RequirementConstraints
+                key={runId}
+                requirement={decisionRequirement}
+                onEdit={status === 'ready' ? onEditConstraints : undefined}
+              />
+            ) : (
             <section className="surface-card" style={{ marginTop: 20 }} aria-label="信息边界划分">
               <div
                 style={{
@@ -562,15 +610,16 @@ export function RequirementStudio({
                 </div>
               </div>
             </section>
+            )}
 
             {/* Step 1 -> Step 2 Handoff Bar */}
             <div className="flow-handoff-bar">
               <div className="flow-handoff-summary">
                 <span className="status-dot dot-pass" />
-                <span>已将「{categorySpec}」需求转译完成，并筛选出适配的面料与版型。</span>
+                <span>按需求约束查看在库版型、面料与工艺组合。</span>
               </div>
               <div className="flow-handoff-actions">
-                <button type="button" className="btn-black" onClick={onProceedToConfigurator}>
+                <button type="button" className="btn-black" disabled={status === 'stale'} onClick={onProceedToConfigurator}>
                   <span>下一步：进入场景选配</span>
                   <ArrowRight size={15} />
                 </button>

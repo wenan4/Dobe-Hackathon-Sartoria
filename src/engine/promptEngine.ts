@@ -96,12 +96,14 @@ export function generateVisualPromptPack(
   const colorSpecified = deconstructed.colorSpecifiedByUser;
   const colorEn = colorSpecified
     ? (COLOR_EN[fabric.colorFamily] ?? 'refined neutral bespoke textile tone')
-    : 'neutral understated dark tonal silk (color undecided, visual structure placeholder only)';
+    : 'undecided fabric color (tonal placeholder for visual structure only)';
   const colorCn = colorSpecified
     ? fabric.colorName
     : '中性深调素雅示意色（客户未指定色彩，仅作结构与肌理预览，不代表最终定色）';
 
   const weaveEn = WEAVE_EN[fabric.weave] ?? 'fine luxury woven textile';
+  const sheenEn = fabric.luster.includes('哑光') ? 'matte finish' :
+    fabric.luster.includes('微光') ? 'soft low sheen' : 'directional visible sheen';
   const sceneEn = SCENE_EN[scene.id] ?? scene.name;
   const patternEn = PATTERN_EN[pattern.blueprintConfig.silhouetteType] ?? pattern.name;
   const craftEnList =
@@ -181,7 +183,7 @@ export function generateVisualPromptPack(
         cameraSpec: '100mm 微距镜头，f/2.8 局部材质精拍',
         lightingSpec: '45° 侧向柔光勾勒织纹与精细车线',
         prompts: {
-          midjourney: `Ultra-sharp 100mm macro bespoke tailoring detail collage focusing on collar edge, shoulder seam, cuff hem and woven micro-texture of a garment in ${colorEn} (${weaveEn}). Highlight ${craftEnList}. Subtle fine silk sheen, visible clean hand-finished seam construction, soft directional atelier lighting, luxury textile archive photography --ar 4:3 --v 6.1 --style raw --stylize 140`,
+          midjourney: `Ultra-sharp 100mm macro bespoke tailoring detail collage focusing on collar edge, shoulder seam, cuff hem and woven micro-texture of a garment in ${colorEn} (${weaveEn}). Highlight ${craftEnList}. ${sheenEn}, visible clean hand-finished seam construction, soft directional atelier lighting, luxury textile archive photography --ar 4:3 --v 6.1 --style raw --stylize 140`,
           flux_sd: `100mm macro bespoke tailoring detail photography, close-up of collar, shoulder seam and sleeve cuff with ${craftEnList} on ${colorEn} (${fabric.gsm}gsm ${weaveEn}), crisp woven fibers, delicate hand-finished edges, soft directional side light, shallow depth of field, ultra realistic editorial quality`,
           jimeng_cn: `100mm 高清高定工艺细节微距特写，重点展示领口线条、肩部微落平肩接缝、袖口下摆结构与面料经纬肌理，材质为${colorCn}${fabric.weave}（${fabric.luster}），精细呈现${craftCnList}。45度柔和侧向工坊光凸显低调小巧暗纹与利落做工，4:3 构图，无文字水印。`,
         },

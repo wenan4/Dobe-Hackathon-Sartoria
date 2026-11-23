@@ -1,5 +1,6 @@
 import { ArrowUpRight, Check, Clock, Download, FileJson, Plus, Printer, Save } from 'lucide-react';
 import { useState } from 'react';
+import { VersionHandoff } from '../components/DecisionPanels';
 import { HISTORICAL_CASES } from '../data/cases';
 import { CRAFTS } from '../data/crafts';
 import { FABRICS } from '../data/fabrics';
@@ -212,6 +213,8 @@ export function BusinessLedger({
           <div className="kpi-num">{totalActions}</div>
         </div>
       </div>
+
+      {selected?.decisionHistory && <VersionHandoff key={selected.id} history={selected.decisionHistory} />}
 
       <div className="ledger-split">
         <section className="surface-card" style={{ padding: 0, overflow: 'hidden' }}>

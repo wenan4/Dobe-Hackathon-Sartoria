@@ -1,3 +1,5 @@
+import type { DecisionHistory } from './decisions';
+
 export type BusinessType = 'private_couture' | 'corporate_uniform';
 export type SeasonType = 'spring' | 'summer' | 'autumn' | 'winter' | 'all_season';
 export type StylePackId = 'shanghai-haipai' | 'minimal-executive';
@@ -396,6 +398,7 @@ export interface LedgerRecord {
   promptPack: VisualPromptPack;
   specialistNotes: string;
   auditLogs: AuditLogEntry[];
+  decisionHistory?: DecisionHistory;
 }
 
 export interface LlmSettings {

@@ -489,7 +489,8 @@ export function deconstructLocally(input: RequirementInput): DeconstructedRequir
 
 export async function deconstructRequirement(
   input: RequirementInput,
-  llmSettings: LlmSettings
+  llmSettings: LlmSettings,
+  signal?: AbortSignal
 ): Promise<DeconstructedRequirement> {
   const localResult = deconstructLocally(input);
 
@@ -507,6 +508,7 @@ export async function deconstructRequirement(
 
     const response = await fetch(endpoint, {
       method: 'POST',
+      signal: signal ?? AbortSignal.timeout(6_000),
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${llmSettings.apiKey.trim()}`,
@@ -530,17 +532,19 @@ export async function deconstructRequirement(
     if (!jsonMatch) return localResult;
 
     const parsed = JSON.parse(jsonMatch[0]) as Partial<DeconstructedRequirement>;
-    if (!Array.isArray(parsed.officialSpecs) || parsed.officialSpecs.length !== 8) {
+    if (!Array.isArray(parsed.officialSpecs) || parsed.officialSpecs.length !== 8 ||
+        parsed.officialSpecs.some((spec) => !spec || typeof spec.label !== 'string' || typeof spec.value !== 'string')) {
       return localResult;
     }
 
     return {
       ...localResult,
       engineUsed: 'llm_api',
-      aestheticArchetype: parsed.aestheticArchetype || localResult.aestheticArchetype,
+      aestheticArchetype: typeof parsed.aestheticArchetype === 'string' && parsed.aestheticArchetype.trim()
+        ? parsed.aestheticArchetype : localResult.aestheticArchetype,
       emotionTags:
         Array.isArray(parsed.emotionTags) && parsed.emotionTags.length > 0
-          ? parsed.emotionTags.slice(0, 5)
+          ? parsed.emotionTags.filter((tag) => typeof tag === 'string').slice(0, 5)
           : localResult.emotionTags,
       officialSpecs: parsed.officialSpecs,
       threeBuckets: buildFallbackThreeBuckets(

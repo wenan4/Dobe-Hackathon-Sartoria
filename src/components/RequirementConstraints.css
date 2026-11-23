@@ -1,0 +1,55 @@
+.constraint-panel { margin-top: 20px; }
+
+.constraint-header,
+.constraint-item-head,
+.constraint-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.constraint-header h2 { font-size: 15px; font-weight: 600; }
+
+.constraint-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.constraint-group {
+  padding: 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+.constraint-group h3,
+.constraint-questions h3 {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.constraint-group h3 { display: flex; align-items: center; gap: 8px; }
+.constraint-item { border-top: 1px solid var(--border-medium); padding: 10px 0; }
+.constraint-item:last-child { padding-bottom: 0; }
+.constraint-item-head { font-size: 13px; font-weight: 600; }
+.constraint-panel .btn-outline, .constraint-panel .btn-black { font-size: 12px; padding: 5px 10px; }
+.constraint-value { margin: 3px 0; font-size: 14px; }
+.constraint-note { margin: 0; font-size: 12px; color: var(--ink-secondary); }
+.constraint-quote { color: var(--ink-secondary); margin: 5px 0 0; font-size: 12px; }
+.constraint-quote summary { cursor: pointer; }
+.constraint-quote blockquote, .constraint-quote p { margin: 6px 0 0; }
+.constraint-editor { display: grid; gap: 8px; margin-top: 10px; }
+.constraint-editor label { display: grid; gap: 3px; font-size: 12px; }
+.constraint-editor select, .constraint-editor input { min-width: 0; }
+.constraint-actions { justify-content: flex-start; }
+.constraint-questions { margin: 12px 0 0; font-size: 13px; }
+.constraint-questions ul { margin: 0; padding-inline-start: 20px; }
+
+@media (max-width: 700px) {
+  .constraint-groups { grid-template-columns: 1fr; }
+}
