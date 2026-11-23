@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, RotateCcw, X } from 'lucide-react';
-import { SCENES } from '../data/scenes';
 import type { ResolvedStageVisual } from '../engine/visualResolver';
 import type {
   ConfigurationState,
@@ -18,9 +17,12 @@ interface StageViewportProps {
   fabric: FabricAsset;
   crafts: CraftAsset[];
   scene: SceneEnvironment;
+  scenes: SceneEnvironment[];
+  matchedSceneIds: string[];
   config: ConfigurationState;
   match: MatchExplanation;
   visual: ResolvedStageVisual;
+  changeFeedback: string | null;
   onChangeView: (view: ConfigurationState['activeView']) => void;
   onSelectScene: (sceneId: string) => void;
   onFocusHotspot: (hotspotId: string | null) => void;
@@ -31,9 +33,12 @@ export function StageViewport({
   fabric,
   crafts,
   scene,
+  scenes,
+  matchedSceneIds,
   config,
   match,
   visual,
+  changeFeedback,
   onChangeView,
   onSelectScene,
   onFocusHotspot,
@@ -42,12 +47,24 @@ export function StageViewport({
 
   return (
     <section className="stage-pane" aria-label="交互式场景选配大舞台">
-      {/* Minimal Floating Top Bar — Porsche / Apple Style */}
+      {/* Top Bar: Live Selection Summary + View Mode Switcher */}
       <div className="stage-bar-top">
         <div className="stage-minimal-pill">
-          <span className="status-dot dot-pass" />
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              background: fabric.pbr.baseColor,
+              border: '1px solid rgba(0,0,0,0.18)',
+              flexShrink: 0,
+            }}
+          />
+          <span>{fabric.shortName}</span>
+          <span style={{ color: 'var(--ink-muted)' }}>·</span>
+          <span>{scene.shortName}</span>
+          <span style={{ color: 'var(--ink-muted)' }}>·</span>
           <span>契合 {match.overallScore}%</span>
-          <span style={{ color: 'var(--ink-muted)', fontWeight: 400 }}>· {visual.previewBadge}</span>
         </div>
 
         <div className="segmented" role="tablist" aria-label="视图切换">
@@ -72,49 +89,63 @@ export function StageViewport({
         </div>
       </div>
 
-      {/* Main Stage Content */}
+      {/* Live Tactile Change Toast on Stage */}
+      <AnimatePresence>
+        {changeFeedback && (
+          <motion.div
+            key={changeFeedback}
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+            className="stage-feedback-toast"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="status-dot dot-pass" />
+            <span>{changeFeedback}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main Stage Viewport */}
       <div className="stage-viewport">
         {config.activeView === 'scene_look' && (
           <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={`${visual.heroImage}-${fabric.id}-${scene.id}`}
-                initial={{ opacity: 0.35 }}
-                animate={{
-                  opacity: 1,
-                  scale: focusedPin ? focusedPin.hotspot.zoomScale : 1,
-                }}
-                exit={{ opacity: 0.25 }}
-                transition={{ duration: 0.45, ease: [0.25, 0.1, 0.25, 1] }}
+            {/* Keep <img> stably mounted — never unmount on swatch change */}
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                transform: focusedPin ? `scale(${focusedPin.hotspot.zoomScale})` : 'scale(1)',
+                transformOrigin: focusedPin
+                  ? `${focusedPin.hotspot.x}% ${focusedPin.hotspot.y}%`
+                  : '50% 45%',
+                transition: 'transform 380ms cubic-bezier(0.25, 0.1, 0.25, 1)',
+                position: 'relative',
+              }}
+            >
+              <img
+                src={visual.heroImage}
+                alt={`${pattern.name} · ${scene.name}`}
+                className="stage-photo"
                 style={{
-                  width: '100%',
-                  height: '100%',
-                  transformOrigin: focusedPin
-                    ? `${focusedPin.hotspot.x}% ${focusedPin.hotspot.y}%`
-                    : '50% 45%',
-                  position: 'relative',
+                  filter: visual.ambientFilter,
+                  transition: 'filter 240ms ease',
                 }}
-              >
-                <img
-                  src={visual.heroImage}
-                  alt={`${pattern.name} · ${scene.name}`}
-                  className="stage-photo"
-                  style={{ filter: visual.ambientFilter }}
-                />
-                {visual.fabricTintOverlay !== 'none' && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      inset: 0,
-                      background: visual.fabricTintOverlay,
-                      pointerEvents: 'none',
-                    }}
-                  />
-                )}
-              </motion.div>
-            </AnimatePresence>
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: visual.fabricTintOverlay === 'none' ? 'transparent' : visual.fabricTintOverlay,
+                  mixBlendMode: 'soft-light',
+                  pointerEvents: 'none',
+                  transition: 'background 260ms ease',
+                }}
+              />
+            </div>
 
-            {/* Minimalist Porsche-Style White Glass '+' Hotspots */}
             {!focusedPin &&
               visual.hotspots.map((item) => (
                 <button
@@ -140,7 +171,7 @@ export function StageViewport({
                   right: 22,
                   top: 70,
                   zIndex: 18,
-                  background: 'rgba(255,255,255,0.9)',
+                  background: 'rgba(255,255,255,0.92)',
                   backdropFilter: 'blur(12px)',
                 }}
               >
@@ -189,7 +220,7 @@ export function StageViewport({
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: '#111111' }}>
                     {focusedPin.title}
                   </div>
-                  <p style={{ fontSize: 12, color: '#55555a', marginTop: 4, lineHeight: 1.5 }}>
+                  <p style={{ fontSize: 12.5, color: '#55555a', marginTop: 4, lineHeight: 1.55 }}>
                     {focusedPin.subtitle}
                   </p>
                 </motion.div>
@@ -209,11 +240,8 @@ export function StageViewport({
                 />
               </div>
               <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-hairline)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>
                   {crafts.length > 0 ? crafts.map((c) => c.shortName).join(' · ') : '极简净面精工'}
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>
-                  {crafts[0]?.highlightCopy ?? '以克制立体剪裁突出面料本真肌理。'}
                 </div>
               </div>
             </div>
@@ -227,12 +255,12 @@ export function StageViewport({
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  fontSize: 12,
+                  fontSize: 12.5,
                 }}
               >
                 <span style={{ fontWeight: 600 }}>{fabric.shortName}</span>
                 <span style={{ color: 'var(--ink-muted)' }}>
-                  {fabric.gsm}g/m² · {fabric.drape} · {fabric.luster}
+                  {fabric.gsm}g/m² · {fabric.drape}
                 </span>
               </div>
             </div>
@@ -244,28 +272,32 @@ export function StageViewport({
         )}
       </div>
 
-      {/* Bottom Floating Frosted Glass Scene Dock */}
-      <div className="scene-float-dock" role="group" aria-label="设定场景切换">
-        {SCENES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`scene-dock-btn ${config.sceneId === s.id ? 'active' : ''}`}
-            onClick={() => onSelectScene(s.id)}
-          >
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: s.accentSwatch,
-                border: '1px solid rgba(0,0,0,0.12)',
-                flexShrink: 0,
-              }}
-            />
-            <span>{s.shortName}</span>
-          </button>
-        ))}
+      {/* Bottom Floating Scene Dock — ordered by relevance to current requirement */}
+      <div className="scene-float-dock" role="group" aria-label="场景切换">
+        {scenes.map((s) => {
+          const isMatched = matchedSceneIds.includes(s.id);
+          return (
+            <button
+              key={s.id}
+              type="button"
+              className={`scene-dock-btn ${config.sceneId === s.id ? 'active' : ''}`}
+              onClick={() => onSelectScene(s.id)}
+              title={isMatched ? '适配当前需求的推荐场景' : s.name}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: s.accentSwatch,
+                  border: '1px solid rgba(0,0,0,0.12)',
+                  flexShrink: 0,
+                }}
+              />
+              <span>{s.shortName}</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );

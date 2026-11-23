@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoundaryModal } from './components/BoundaryModal';
 import { LlmConfigModal } from './components/LlmConfigModal';
-import { TopNav, type WorkspaceTab } from './components/TopNav';
+import {
+  TopNav,
+  type CompletedSteps,
+  type FlowStepTab,
+  type WorkspaceTab,
+} from './components/TopNav';
 import { HISTORICAL_CASES } from './data/cases';
 import { CRAFTS } from './data/crafts';
 import { FABRICS } from './data/fabrics';
@@ -24,7 +29,7 @@ import { ConfiguratorStudio } from './pages/ConfiguratorStudio';
 import { LandingHome } from './pages/LandingHome';
 import { OnlineDocsPage } from './pages/OnlineDocsPage';
 import { ProposalAndPrompts } from './pages/ProposalAndPrompts';
-import { RequirementStudio } from './pages/RequirementStudio';
+import { RequirementStudio, type DeconstructStatus } from './pages/RequirementStudio';
 import { VideoShowcase } from './pages/VideoShowcase';
 import type {
   AuditLogEntry,
@@ -90,6 +95,23 @@ function summarizeConfigDiff(prev: ConfigurationState, next: ConfigurationState)
   return diffs.length > 0 ? diffs.join('；') : undefined;
 }
 
+function resolveInitialConfigForInput(
+  nextInput: RequirementInput,
+  nextDeconstructed: DeconstructedRequirement
+): ConfigurationState {
+  if (nextInput.presetDemoId) {
+    const preset = PRESET_DEMO_CASES.find((d) => d.id === nextInput.presetDemoId);
+    if (preset && preset.input.rawNarrative === nextInput.rawNarrative) {
+      return preset.recommendedConfig;
+    }
+  }
+  return recommendInitialConfig(nextInput, nextDeconstructed);
+}
+
+function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export default function App() {
   const initialDemo = PRESET_DEMO_CASES[0];
 
@@ -99,25 +121,96 @@ export default function App() {
       : { section: 'home', demoTab: 'requirements' }
   );
 
-  const navigate = useCallback((section: PortalSection, demoTab?: WorkspaceTab) => {
-    setRoute((prev) => {
-      const next: AppRoute = {
-        section,
-        demoTab: demoTab ?? prev.demoTab,
-      };
-      if (typeof window !== 'undefined') {
-        const nextPath = buildPathname(next);
-        if (window.location.pathname !== nextPath) {
-          window.history.pushState(null, '', nextPath);
-        }
+  const startedBeyondStep1 =
+    route.section === 'demo' &&
+    (route.demoTab === 'configurator' || route.demoTab === 'proposal' || route.demoTab === 'ledger');
+
+  const [lastFlowTab, setLastFlowTab] = useState<FlowStepTab>('requirements');
+  const [activeStylePackId, setActiveStylePackId] = useState<StylePackId>('shanghai-haipai');
+  const [input, setInput] = useState<RequirementInput>(initialDemo.input);
+  const [deconstructed, setDeconstructed] = useState<DeconstructedRequirement>(() =>
+    deconstructLocally(initialDemo.input)
+  );
+  const [deconstructStatus, setDeconstructStatus] = useState<DeconstructStatus>(
+    startedBeyondStep1 ? 'ready' : 'idle'
+  );
+  const [analysisStage, setAnalysisStage] = useState<number>(0);
+  const [deconstructRunId, setDeconstructRunId] = useState<number>(0);
+
+  const [config, setConfig] = useState<ConfigurationState>(initialDemo.recommendedConfig);
+  const [recommendedPatternId, setRecommendedPatternId] = useState<string>(
+    initialDemo.recommendedConfig.patternId
+  );
+  const [completedSteps, setCompletedSteps] = useState<CompletedSteps>({
+    requirements: startedBeyondStep1,
+    configurator: route.section === 'demo' && (route.demoTab === 'proposal' || route.demoTab === 'ledger'),
+    proposal: route.section === 'demo' && route.demoTab === 'ledger',
+    ledger: false,
+  });
+
+  const [sessionLogs, setSessionLogs] = useState<AuditLogEntry[]>([]);
+  const [ledgerRecords, setLedgerRecords] = useState<LedgerRecord[]>(() => loadLedgerRecords());
+  const [lastArchivedRecordId, setLastArchivedRecordId] = useState<string | null>(null);
+  const [llmSettings, setLlmSettings] = useState<LlmSettings>(() => loadLlmSettings());
+  const [showLlmModal, setShowLlmModal] = useState(false);
+  const [showBoundaryModal, setShowBoundaryModal] = useState(false);
+
+  const deconstructTokenRef = useRef(0);
+
+  const activeSection = route.section;
+  const activeTab = route.demoTab;
+
+  const syncIfNeededBeforeLeavingStep1 = useCallback(
+    (targetTab: WorkspaceTab) => {
+      if (
+        (targetTab === 'configurator' || targetTab === 'proposal') &&
+        (deconstructStatus === 'idle' || deconstructStatus === 'stale')
+      ) {
+        const nextDeconstructed = deconstructLocally(input);
+        const nextConfig = resolveInitialConfigForInput(input, nextDeconstructed);
+        setDeconstructed(nextDeconstructed);
+        setConfig(nextConfig);
+        setRecommendedPatternId(nextConfig.patternId);
+        setDeconstructStatus('ready');
+        setDeconstructRunId((n) => n + 1);
+        setCompletedSteps((prev) => ({
+          ...prev,
+          requirements: true,
+          configurator: targetTab === 'proposal' ? true : prev.configurator,
+        }));
       }
-      return next;
-    });
-  }, []);
+    },
+    [deconstructStatus, input]
+  );
+
+  const navigate = useCallback(
+    (section: PortalSection, demoTab?: WorkspaceTab) => {
+      setRoute((prev) => {
+        const resolvedTab = demoTab ?? prev.demoTab;
+        if (section === 'demo') {
+          if (resolvedTab !== 'knowledge') {
+            setLastFlowTab(resolvedTab);
+          }
+          syncIfNeededBeforeLeavingStep1(resolvedTab);
+        }
+        const next: AppRoute = {
+          section,
+          demoTab: resolvedTab,
+        };
+        if (typeof window !== 'undefined') {
+          const nextPath = buildPathname(next);
+          if (window.location.pathname !== nextPath) {
+            window.history.pushState(null, '', nextPath);
+          }
+        }
+        return next;
+      });
+    },
+    [syncIfNeededBeforeLeavingStep1]
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    // Normalize /vedio alias cleanly to /video in the address bar
     if (window.location.pathname.toLowerCase() === '/vedio') {
       window.history.replaceState(null, '', '/video');
     }
@@ -127,32 +220,6 @@ export default function App() {
     window.addEventListener('popstate', handlePop);
     return () => window.removeEventListener('popstate', handlePop);
   }, []);
-
-  const activeSection = route.section;
-  const activeTab = route.demoTab;
-
-  const [activeStylePackId, setActiveStylePackId] = useState<StylePackId>('shanghai-haipai');
-  const [input, setInput] = useState<RequirementInput>(initialDemo.input);
-  const [deconstructed, setDeconstructed] = useState<DeconstructedRequirement>(() =>
-    deconstructLocally(initialDemo.input)
-  );
-  const [config, setConfig] = useState<ConfigurationState>(initialDemo.recommendedConfig);
-  const [isDeconstructing, setIsDeconstructing] = useState(false);
-  const [sessionLogs, setSessionLogs] = useState<AuditLogEntry[]>(() => [
-    {
-      id: 'init-log-1',
-      timestamp: new Date().toISOString(),
-      stage: '需求解构',
-      action: `初始化载入「${initialDemo.title}」`,
-      detail: '完成 8 项专业参数、6 维审美标签与三分栏边界拆解',
-      actor: 'Sartoria AI 助手',
-    },
-  ]);
-
-  const [ledgerRecords, setLedgerRecords] = useState<LedgerRecord[]>(() => loadLedgerRecords());
-  const [llmSettings, setLlmSettings] = useState<LlmSettings>(() => loadLlmSettings());
-  const [showLlmModal, setShowLlmModal] = useState(false);
-  const [showBoundaryModal, setShowBoundaryModal] = useState(false);
 
   useEffect(() => {
     saveLedgerRecords(ledgerRecords);
@@ -198,21 +265,26 @@ export default function App() {
     [input, deconstructed, config]
   );
 
+  const handleChangeInput = (next: RequirementInput) => {
+    setInput(next);
+    if (deconstructStatus === 'ready') {
+      setDeconstructStatus('stale');
+    }
+  };
+
   const handleSelectPresetDemo = (demo: PresetDemoCase) => {
+    deconstructTokenRef.current += 1;
     setInput(demo.input);
-    const nextDeconstructed = deconstructLocally(demo.input);
-    setDeconstructed(nextDeconstructed);
-    setConfig(demo.recommendedConfig);
-    setSessionLogs([
-      {
-        id: `slog-preset-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        stage: '需求解构',
-        action: `载入「${demo.title}」`,
-        detail: '完成 8 项专业转译、三类信息分离并匹配默认静态资产',
-        actor: 'Sartoria AI 助手',
-      },
-    ]);
+    setDeconstructStatus('idle');
+    setAnalysisStage(0);
+    setCompletedSteps({
+      requirements: false,
+      configurator: false,
+      proposal: false,
+      ledger: false,
+    });
+    setLastArchivedRecordId(null);
+    setSessionLogs([]);
   };
 
   const handleLaunchPresetById = (presetId: string) => {
@@ -224,23 +296,43 @@ export default function App() {
   };
 
   const handleRunDeconstruct = async () => {
-    setIsDeconstructing(true);
-    try {
-      const nextDeconstructed = await deconstructRequirement(input, llmSettings);
-      setDeconstructed(nextDeconstructed);
-      const nextConfig = recommendInitialConfig(input, nextDeconstructed);
-      const diffSummary = summarizeConfigDiff(config, nextConfig);
-      setConfig(nextConfig);
-      appendSessionLog(
-        '需求解构',
-        '执行自然语言需求智能拆解',
-        `输出 8 项专业参数与 6 维审美标签（${nextDeconstructed.colorSpecifiedByUser ? '已识别色彩倾向' : '未指定颜色·留待人工核色'}）`,
-        'Sartoria AI 助手',
-        diffSummary
-      );
-    } finally {
-      setIsDeconstructing(false);
-    }
+    if (!input.rawNarrative.trim()) return;
+    const token = ++deconstructTokenRef.current;
+
+    setDeconstructStatus('analyzing');
+    setAnalysisStage(1);
+
+    const enginePromise = deconstructRequirement(input, llmSettings);
+
+    await waitMs(220);
+    if (deconstructTokenRef.current !== token) return;
+    setAnalysisStage(2);
+
+    await waitMs(240);
+    if (deconstructTokenRef.current !== token) return;
+    setAnalysisStage(3);
+
+    const [nextDeconstructed] = await Promise.all([enginePromise, waitMs(240)]);
+    if (deconstructTokenRef.current !== token) return;
+
+    const nextConfig = resolveInitialConfigForInput(input, nextDeconstructed);
+    const diffSummary =
+      deconstructRunId > 0 ? summarizeConfigDiff(config, nextConfig) : undefined;
+
+    setDeconstructed(nextDeconstructed);
+    setConfig(nextConfig);
+    setRecommendedPatternId(nextConfig.patternId);
+    setDeconstructRunId((n) => n + 1);
+    setDeconstructStatus('ready');
+    setCompletedSteps((prev) => ({ ...prev, requirements: true }));
+
+    appendSessionLog(
+      '需求解构',
+      '完成自然语言需求智能拆解',
+      `输出 8 项专业参数与 6 维审美标签（${nextDeconstructed.colorSpecifiedByUser ? '已识别色彩倾向' : '未指定颜色·留待人工核色'}）`,
+      'Sartoria AI 助手',
+      diffSummary
+    );
   };
 
   const handleUpdateConfig = (
@@ -280,7 +372,7 @@ export default function App() {
     navigate('demo', 'configurator');
   };
 
-  const upsertCurrentSessionToLedger = () => {
+  const upsertCurrentSessionToLedger = (): string => {
     const existing = ledgerRecords.find((r) => r.projectName === input.projectName);
     const configDiff = existing ? summarizeConfigDiff(existing.config, config) : undefined;
     const nextRec = buildLedgerRecordFromSession({
@@ -302,12 +394,26 @@ export default function App() {
       const filtered = prev.filter((r) => r.id !== nextRec.id);
       return [nextRec, ...filtered];
     });
+    setLastArchivedRecordId(nextRec.id);
+    setCompletedSteps((prev) => ({
+      ...prev,
+      requirements: true,
+      configurator: true,
+      proposal: true,
+      ledger: true,
+    }));
+    return nextRec.id;
   };
 
   const handleSaveAndOpenProposal = () => {
     appendSessionLog('方案初稿', '生成方案初稿与三镜头视觉需求包', `方案编号 ${proposal.id}`);
-    upsertCurrentSessionToLedger();
+    setCompletedSteps((prev) => ({ ...prev, requirements: true, configurator: true }));
     navigate('demo', 'proposal');
+  };
+
+  const handleArchiveAndOpenLedger = () => {
+    upsertCurrentSessionToLedger();
+    navigate('demo', 'ledger');
   };
 
   const handleUpdateLedgerRecord = (
@@ -350,6 +456,15 @@ export default function App() {
     setInput(record.requirementInput);
     setDeconstructed(record.deconstructed);
     setConfig(record.config);
+    setRecommendedPatternId(record.config.patternId);
+    setDeconstructStatus('ready');
+    setDeconstructRunId((n) => n + 1);
+    setCompletedSteps({
+      requirements: true,
+      configurator: false,
+      proposal: false,
+      ledger: false,
+    });
     setSessionLogs([
       {
         id: `slog-reload-${Date.now()}`,
@@ -361,6 +476,11 @@ export default function App() {
       },
     ]);
     navigate('demo', 'configurator');
+  };
+
+  const handleStartNewRequirement = () => {
+    handleSelectPresetDemo(PRESET_DEMO_CASES[0]);
+    navigate('demo', 'requirements');
   };
 
   const handleSaveLlmSettings = (next: LlmSettings) => {
@@ -377,6 +497,7 @@ export default function App() {
       <TopNav
         activeSection={activeSection}
         activeTab={activeTab}
+        completedSteps={completedSteps}
         onNavigate={navigate}
         llmSettings={llmSettings}
         ledgerCount={ledgerRecords.length}
@@ -389,7 +510,6 @@ export default function App() {
           <LandingHome
             onNavigate={navigate}
             onLaunchPresetDemo={handleLaunchPresetById}
-            onOpenBoundaryModal={() => setShowBoundaryModal(true)}
           />
         )}
 
@@ -401,8 +521,10 @@ export default function App() {
           <RequirementStudio
             input={input}
             deconstructed={deconstructed}
-            isDeconstructing={isDeconstructing}
-            onChangeInput={setInput}
+            status={deconstructStatus}
+            analysisStage={analysisStage}
+            runId={deconstructRunId}
+            onChangeInput={handleChangeInput}
             onSelectPresetDemo={handleSelectPresetDemo}
             onRunDeconstruct={handleRunDeconstruct}
             onProceedToConfigurator={() => navigate('demo', 'configurator')}
@@ -414,12 +536,14 @@ export default function App() {
             input={input}
             deconstructed={deconstructed}
             config={config}
+            recommendedPatternId={recommendedPatternId}
             match={match}
             feasibility={feasibility}
             visual={visual}
             promptPack={promptPack}
             onUpdateConfig={handleUpdateConfig}
             onApplyCasePreset={handleApplyCasePreset}
+            onBackToRequirements={() => navigate('demo', 'requirements')}
             onSaveAndOpenProposal={handleSaveAndOpenProposal}
           />
         )}
@@ -430,8 +554,10 @@ export default function App() {
             promptPack={promptPack}
             heroPreviewImage={visual.heroImage}
             craftPreviewImage={visual.craftCloseupImage}
+            isArchived={completedSteps.ledger}
+            onBackToConfigurator={() => navigate('demo', 'configurator')}
             onSaveToLedger={upsertCurrentSessionToLedger}
-            onOpenLedger={() => navigate('demo', 'ledger')}
+            onArchiveAndOpenLedger={handleArchiveAndOpenLedger}
           />
         )}
 
@@ -439,6 +565,7 @@ export default function App() {
           <AssetKnowledgeBase
             activeStylePackId={activeStylePackId}
             onChangeStylePack={setActiveStylePackId}
+            onBackToFlow={() => navigate('demo', lastFlowTab)}
             onTryPatternInStudio={(patternId) => {
               handleUpdateConfig(
                 (prev) => ({ ...prev, patternId, activeView: 'blueprint', focusedHotspotId: null }),
@@ -473,8 +600,10 @@ export default function App() {
         {activeSection === 'demo' && activeTab === 'ledger' && (
           <BusinessLedger
             records={ledgerRecords}
+            highlightedRecordId={lastArchivedRecordId}
             onUpdateRecord={handleUpdateLedgerRecord}
             onLoadRecordIntoStudio={handleLoadRecordIntoStudio}
+            onStartNewRequirement={handleStartNewRequirement}
           />
         )}
       </main>

@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronDown, Download, Search } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, ChevronDown, Download, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { HISTORICAL_CASES } from '../data/cases';
 import { CRAFTS } from '../data/crafts';
@@ -13,6 +13,7 @@ type AssetTab = 'patterns' | 'fabrics' | 'crafts' | 'cases';
 interface AssetKnowledgeBaseProps {
   activeStylePackId: StylePackId;
   onChangeStylePack: (id: StylePackId) => void;
+  onBackToFlow: () => void;
   onTryPatternInStudio: (patternId: string) => void;
   onTryFabricInStudio: (fabricId: string) => void;
   onTryCraftInStudio: (craftId: string) => void;
@@ -22,6 +23,7 @@ interface AssetKnowledgeBaseProps {
 export function AssetKnowledgeBase({
   activeStylePackId,
   onChangeStylePack,
+  onBackToFlow,
   onTryPatternInStudio,
   onTryFabricInStudio,
   onTryCraftInStudio,
@@ -84,16 +86,17 @@ export function AssetKnowledgeBase({
   return (
     <div className="page-wrap">
       <div className="page-head">
-        <div>
-          <h1 className="page-h1">定制资产知识库</h1>
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
-            模拟静态定制资产 · 来源：上海服装集团海派定制公开案例结构化整理 · 仅用于企划辅助原型演示，不接入真实生产 API
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <h1 className="page-h1">定制资产库</h1>
+          <button type="button" className="btn-text" onClick={onBackToFlow}>
+            <ArrowLeft size={14} />
+            <span>返回当前流程</span>
+          </button>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <select
             className="clean-select"
-            style={{ width: 220, padding: '8px 12px', fontSize: 12.5 }}
+            style={{ width: 200, padding: '8px 12px', fontSize: 13 }}
             value={activeStylePackId}
             onChange={(e) => {
               const id = e.target.value as StylePackId;
@@ -121,12 +124,11 @@ export function AssetKnowledgeBase({
             }
           >
             <Download size={14} />
-            <span>导出资源清单</span>
+            <span>导出清单</span>
           </button>
         </div>
       </div>
 
-      {/* Minimal Category Segmented Bar + Search */}
       <div
         style={{
           display: 'flex',
@@ -143,7 +145,7 @@ export function AssetKnowledgeBase({
               { id: 'patterns', label: `版型 (${PATTERNS.length})` },
               { id: 'fabrics', label: `面料 (${FABRICS.length})` },
               { id: 'crafts', label: `工艺 (${CRAFTS.length})` },
-              { id: 'cases', label: `历史案例 (${HISTORICAL_CASES.length})` },
+              { id: 'cases', label: `案例 (${HISTORICAL_CASES.length})` },
             ] as const
           ).map((t) => (
             <button
@@ -160,7 +162,7 @@ export function AssetKnowledgeBase({
         <div style={{ position: 'relative' }}>
           <Search
             size={14}
-            color="#86868b"
+            color="#76767c"
             style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}
           />
           <input
@@ -177,19 +179,19 @@ export function AssetKnowledgeBase({
         <div className="clean-grid">
           {filteredPatterns.map((pat) => (
             <div key={pat.id} className="asset-card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--ink-muted)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--ink-muted)' }}>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>{pat.code}</span>
                 <span>{pat.category}</span>
               </div>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>{pat.name}</h3>
-              <div style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{pat.shortSpec}</div>
+              <h3 style={{ fontSize: 15.5, fontWeight: 600 }}>{pat.name}</h3>
+              <div style={{ fontSize: 13, color: 'var(--ink-secondary)' }}>{pat.shortSpec}</div>
 
               <details className="disclosure" style={{ marginTop: 4, paddingTop: 8 }}>
                 <summary>
-                  <span>版型与松量规范</span>
+                  <span>版型参数</span>
                   <ChevronDown size={13} />
                 </summary>
-                <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 8, lineHeight: 1.6 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 8, lineHeight: 1.6 }}>
                   <div>结构：{pat.silhouette}</div>
                   <div>领型：{pat.collarType}</div>
                   <div>余量：{pat.easeAllowance}</div>
@@ -202,7 +204,7 @@ export function AssetKnowledgeBase({
                 style={{ marginTop: 'auto', width: '100%' }}
                 onClick={() => onTryPatternInStudio(pat.id)}
               >
-                <span>在选配工作室试用</span>
+                <span>在选配室试用</span>
                 <ArrowUpRight size={13} />
               </button>
             </div>
@@ -216,27 +218,27 @@ export function AssetKnowledgeBase({
             <div key={fab.id} className="asset-card">
               <div
                 style={{
-                  height: 60,
+                  height: 64,
                   borderRadius: 10,
                   background: `linear-gradient(135deg, ${fab.pbr.baseColor}, ${fab.pbr.accentColor} 60%, ${fab.pbr.sheenColor})`,
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}
               />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--ink-muted)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--ink-muted)' }}>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>{fab.code}</span>
                 <span>
                   {fab.gsm}g/m² · {fab.drape}
                 </span>
               </div>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>{fab.name}</h3>
-              <div style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{fab.composition}</div>
+              <h3 style={{ fontSize: 15.5, fontWeight: 600 }}>{fab.name}</h3>
+              <div style={{ fontSize: 13, color: 'var(--ink-secondary)' }}>{fab.composition}</div>
 
               <details className="disclosure" style={{ marginTop: 4, paddingTop: 8 }}>
                 <summary>
-                  <span>护理与使用规范</span>
+                  <span>护理说明</span>
                   <ChevronDown size={13} />
                 </summary>
-                <p style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 8, lineHeight: 1.55 }}>
+                <p style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 8, lineHeight: 1.55 }}>
                   {fab.careAndMoqNote}
                 </p>
               </details>
@@ -262,14 +264,14 @@ export function AssetKnowledgeBase({
               <img
                 src={craft.closeupImage}
                 alt={craft.name}
-                style={{ width: '100%', height: 130, objectFit: 'cover', borderRadius: 10 }}
+                style={{ width: '100%', height: 136, objectFit: 'cover', borderRadius: 10 }}
               />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--ink-muted)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--ink-muted)' }}>
                 <span>{craft.heritageLevel}</span>
                 <span>+{craft.extraLeadDays} 工作日</span>
               </div>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>{craft.name}</h3>
-              <p style={{ fontSize: 12.5, color: 'var(--ink-secondary)', lineHeight: 1.55 }}>
+              <h3 style={{ fontSize: 15.5, fontWeight: 600 }}>{craft.name}</h3>
+              <p style={{ fontSize: 13, color: 'var(--ink-secondary)', lineHeight: 1.55 }}>
                 {craft.highlightCopy}
               </p>
               <button
@@ -278,7 +280,7 @@ export function AssetKnowledgeBase({
                 style={{ marginTop: 'auto', width: '100%' }}
                 onClick={() => onTryCraftInStudio(craft.id)}
               >
-                <span>叠加到当前方案</span>
+                <span>叠加到方案</span>
                 <ArrowUpRight size={13} />
               </button>
             </div>
@@ -293,14 +295,14 @@ export function AssetKnowledgeBase({
               <img
                 src={hc.heroImage}
                 alt={hc.title}
-                style={{ width: '100%', height: 154, objectFit: 'cover', borderRadius: 10 }}
+                style={{ width: '100%', height: 156, objectFit: 'cover', borderRadius: 10 }}
               />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--ink-muted)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--ink-muted)' }}>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>{hc.code}</span>
                 <span>{hc.referenceCycle}</span>
               </div>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>{hc.title}</h3>
-              <p style={{ fontSize: 12.5, color: 'var(--ink-secondary)', lineHeight: 1.55 }}>
+              <h3 style={{ fontSize: 15.5, fontWeight: 600 }}>{hc.title}</h3>
+              <p style={{ fontSize: 13, color: 'var(--ink-secondary)', lineHeight: 1.55 }}>
                 {hc.reviewSummary}
               </p>
               <button
@@ -309,7 +311,7 @@ export function AssetKnowledgeBase({
                 style={{ marginTop: 'auto', width: '100%' }}
                 onClick={() => onTryCaseInStudio(hc.id)}
               >
-                <span>复用该案例资产</span>
+                <span>复用该案例</span>
                 <ArrowUpRight size={13} />
               </button>
             </div>

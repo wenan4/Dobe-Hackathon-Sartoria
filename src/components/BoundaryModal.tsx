@@ -36,11 +36,11 @@ export function BoundaryModal({ open, onClose }: BoundaryModalProps) {
             marginBottom: 18,
           }}
         >
-          <div className="feas-bar feas-pass">
+          <div className="notice-row">
             <span className="status-dot dot-pass" />
             <span>100% 静态模拟数据，不对接任何生产系统或真实业务 API。</span>
           </div>
-          <div className="feas-bar feas-caution">
+          <div className="notice-row">
             <span className="status-dot dot-caution" />
             <span>仅输出企划草稿，终审、报价、定版与下单全由人工完成。</span>
           </div>

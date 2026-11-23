@@ -6,12 +6,153 @@ import { PRESET_DEMO_CASES } from '../data/presetDemos';
 import { SCENES } from '../data/scenes';
 import type {
   ConfigurationState,
+  CraftAsset,
   DeconstructedRequirement,
+  FabricAsset,
   FabricThreeDimRationale,
   FeasibilityNotice,
   MatchExplanation,
+  PatternAsset,
   RequirementInput,
+  SceneEnvironment,
 } from '../types/sartoria';
+
+export interface CuratedConfiguratorOptions {
+  recommendedFabrics: FabricAsset[];
+  otherFabrics: FabricAsset[];
+  recommendedPatterns: PatternAsset[];
+  otherPatterns: PatternAsset[];
+  recommendedCrafts: CraftAsset[];
+  otherCrafts: CraftAsset[];
+  orderedScenes: SceneEnvironment[];
+  matchedSceneIds: string[];
+  primaryRecommendedConfig: ConfigurationState;
+}
+
+export function curateAssetsForRequirement(
+  input: RequirementInput,
+  deconstructed: DeconstructedRequirement,
+  currentConfig: ConfigurationState
+): CuratedConfiguratorOptions {
+  const recommended = recommendInitialConfig(input, deconstructed);
+  const text = `${input.projectName} ${input.rawNarrative}`.toLowerCase();
+  const selectedFabric = FABRICS.find((f) => f.id === currentConfig.fabricId) ?? FABRICS[0];
+  const selectedPattern = PATTERNS.find((p) => p.id === currentConfig.patternId) ?? PATTERNS[0];
+
+  const isStage =
+    recommended.patternId === 'pat-official-stage-twopiece' ||
+    text.includes('演出') ||
+    text.includes('舞台') ||
+    text.includes('两件');
+  const isGown =
+    recommended.patternId === 'pat-haipai-gown-column' ||
+    text.includes('晚礼服') ||
+    text.includes('晚宴');
+  const isUniform = input.businessType === 'corporate_uniform';
+
+  // 1. Score & curate Patterns for this requirement
+  const scoredPatterns = PATTERNS.map((pat) => {
+    let score = 0;
+    if (pat.id === recommended.patternId) score += 120;
+    if (pat.id === currentConfig.patternId) score += 15;
+    if (pat.businessType === input.businessType) score += 40;
+    if (isStage && pat.blueprintConfig.silhouetteType === 'stage_two_piece') score += 45;
+    if (isGown && pat.blueprintConfig.silhouetteType === 'gown_column') score += 45;
+    if (!isStage && !isGown && !isUniform && pat.blueprintConfig.silhouetteType.startsWith('jacket_')) {
+      score += 35;
+    }
+    if (pat.suitableScenes.includes(recommended.sceneId)) score += 15;
+    if (pat.seasonFit.includes(input.season) || pat.seasonFit.includes('all_season')) score += 8;
+    return { pat, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const recPatternCount = isUniform ? 2 : 3;
+  const recommendedPatterns = scoredPatterns.slice(0, recPatternCount).map((x) => x.pat);
+  if (!recommendedPatterns.some((p) => p.id === currentConfig.patternId)) {
+    recommendedPatterns.unshift(selectedPattern);
+  }
+  const recPatternIds = new Set(recommendedPatterns.map((p) => p.id));
+  const otherPatterns = scoredPatterns
+    .filter((x) => !recPatternIds.has(x.pat.id))
+    .map((x) => x.pat);
+
+  // 2. Score & curate Fabrics for this requirement
+  const scoredFabrics = FABRICS.map((fab) => {
+    let score = 0;
+    if (fab.id === recommended.fabricId) score += 120;
+    if (fab.id === currentConfig.fabricId) score += 12;
+    if (fab.suitableBusiness.includes(input.businessType)) score += 40;
+    if (isUniform && fab.isDelicateForUniform) score -= 50;
+    if (fab.suitableScenes.includes(recommended.sceneId)) score += 20;
+    if (fab.seasons.includes(input.season) || fab.seasons.includes('all_season')) score += 14;
+    if (isStage && ['ivory_rose', 'ivory', 'stone_gray'].includes(fab.colorFamily)) score += 20;
+    if (isGown && ['obsidian', 'ivory', 'crimson'].includes(fab.colorFamily)) score += 25;
+    if (text.includes('香云纱') && fab.id.includes('xiangyun')) score += 35;
+    if (text.includes('梅花') && fab.id.includes('plum')) score += 35;
+    if (text.includes('宋锦') && fab.weave.includes('宋锦')) score += 20;
+    return { fab, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const recommendedFabrics = scoredFabrics.slice(0, 5).map((x) => x.fab);
+  if (!recommendedFabrics.some((f) => f.id === currentConfig.fabricId)) {
+    recommendedFabrics.unshift(selectedFabric);
+  }
+  const recFabricIds = new Set(recommendedFabrics.map((f) => f.id));
+  const otherFabrics = scoredFabrics
+    .filter((x) => !recFabricIds.has(x.fab.id))
+    .map((x) => x.fab);
+
+  // 3. Score & curate Crafts for this requirement & fabric
+  const scoredCrafts = CRAFTS.map((craft) => {
+    let score = 0;
+    if (recommended.craftIds.includes(craft.id)) score += 100;
+    if (currentConfig.craftIds.includes(craft.id)) score += 20;
+    if (craft.suitableBusiness.includes(input.businessType)) score += 35;
+    if (craft.compatibleFabrics.includes(selectedFabric.weave)) score += 30;
+    else score -= 25;
+    return { craft, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const recommendedCrafts = scoredCrafts
+    .filter((x) => x.score >= 40)
+    .slice(0, 5)
+    .map((x) => x.craft);
+  for (const activeId of currentConfig.craftIds) {
+    if (!recommendedCrafts.some((c) => c.id === activeId)) {
+      const found = CRAFTS.find((c) => c.id === activeId);
+      if (found) recommendedCrafts.push(found);
+    }
+  }
+  const recCraftIds = new Set(recommendedCrafts.map((c) => c.id));
+  const otherCrafts = scoredCrafts
+    .filter((x) => !recCraftIds.has(x.craft.id))
+    .map((x) => x.craft);
+
+  // 4. Order Scenes by relevance to the requirement & current pattern
+  const scoredScenes = SCENES.map((scene) => {
+    let score = 0;
+    if (scene.id === recommended.sceneId) score += 100;
+    if (scene.id === input.targetSceneId) score += 40;
+    if (selectedPattern.suitableScenes.includes(scene.id)) score += 35;
+    if (scene.suitableBusiness.includes(input.businessType)) score += 20;
+    return { scene, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const orderedScenes = scoredScenes.map((x) => x.scene);
+  const matchedSceneIds = scoredScenes.filter((x) => x.score >= 55).map((x) => x.scene.id);
+
+  return {
+    recommendedFabrics,
+    otherFabrics,
+    recommendedPatterns,
+    otherPatterns,
+    recommendedCrafts,
+    otherCrafts,
+    orderedScenes,
+    matchedSceneIds,
+    primaryRecommendedConfig: recommended,
+  };
+}
 
 export function recommendInitialConfig(
   input: RequirementInput,

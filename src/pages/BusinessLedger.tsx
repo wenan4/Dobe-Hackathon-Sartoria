@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, Clock, Download, FileJson, Printer, Save } from 'lucide-react';
+import { ArrowUpRight, Check, Clock, Download, FileJson, Plus, Printer, Save } from 'lucide-react';
 import { useState } from 'react';
 import { HISTORICAL_CASES } from '../data/cases';
 import { CRAFTS } from '../data/crafts';
@@ -10,6 +10,7 @@ import { buildLedgerCsv, downloadTextFile } from '../utils/exporters';
 
 interface BusinessLedgerProps {
   records: LedgerRecord[];
+  highlightedRecordId: string | null;
   onUpdateRecord: (
     id: string,
     patch: {
@@ -22,6 +23,7 @@ interface BusinessLedgerProps {
     diffSummary?: string
   ) => void;
   onLoadRecordIntoStudio: (record: LedgerRecord) => void;
+  onStartNewRequirement: () => void;
 }
 
 const STATUS_OPTIONS: LedgerReviewStatus[] = [
@@ -33,10 +35,21 @@ const STATUS_OPTIONS: LedgerReviewStatus[] = [
 
 export function BusinessLedger({
   records,
+  highlightedRecordId,
   onUpdateRecord,
   onLoadRecordIntoStudio,
+  onStartNewRequirement,
 }: BusinessLedgerProps) {
-  const [selectedId, setSelectedId] = useState<string>(records[0]?.id ?? '');
+  const [userSelection, setUserSelection] = useState<{
+    id: string;
+    forHighlight: string | null;
+  } | null>(null);
+
+  const selectedId =
+    userSelection && userSelection.forHighlight === highlightedRecordId
+      ? userSelection.id
+      : highlightedRecordId ?? records[0]?.id ?? '';
+
   const selected = records.find((r) => r.id === selectedId) ?? records[0];
 
   const [draftEdits, setDraftEdits] = useState<{
@@ -84,6 +97,7 @@ export function BusinessLedger({
     records.length > 0
       ? Math.round(records.reduce((sum, r) => sum + r.matchScore, 0) / records.length)
       : 0;
+  const pendingReviewCount = records.filter((r) => r.status !== '已归档').length;
   const totalActions = records.reduce((sum, r) => sum + r.auditLogs.length, 0);
 
   const selectedPattern = selected ? PATTERNS.find((p) => p.id === selected.config.patternId) : undefined;
@@ -114,10 +128,10 @@ export function BusinessLedger({
       diffs.push(`客户：${selected.clientName} → ${draftClientName}`);
     }
     if (draftStatus !== selected.status) {
-      diffs.push(`流转状态：${selected.status} → ${draftStatus}`);
+      diffs.push(`状态：${selected.status} → ${draftStatus}`);
     }
     if (draftNotes !== selected.specialistNotes) {
-      diffs.push('更新专员复核备注');
+      diffs.push('更新复核备注');
     }
 
     onUpdateRecord(
@@ -128,7 +142,7 @@ export function BusinessLedger({
         status: draftStatus,
         specialistNotes: draftNotes,
       },
-      '人工编辑台账记录',
+      '人工编辑档案记录',
       diffs.join('；')
     );
     setSavedFlag(true);
@@ -138,13 +152,12 @@ export function BusinessLedger({
   return (
     <div className="page-wrap">
       <div className="page-head no-print">
-        <div>
-          <h1 className="page-h1">定制业务台账</h1>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4 }}>
-            可编辑、可导出 · 完整回看原始需求、四类匹配静态资源与全流程修改轨迹（改过什么一目了然）
-          </div>
-        </div>
+        <h1 className="page-h1">项目档案</h1>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button type="button" className="btn-outline" onClick={onStartNewRequirement}>
+            <Plus size={14} />
+            <span>新建需求</span>
+          </button>
           <button type="button" className="btn-outline" onClick={() => window.print()}>
             <Printer size={14} />
             <span>打印</span>
@@ -154,7 +167,7 @@ export function BusinessLedger({
             className="btn-outline"
             onClick={() =>
               downloadTextFile(
-                'Sartoria-AI-台账档案.json',
+                'Sartoria-AI-项目档案.json',
                 JSON.stringify(records, null, 2),
                 'application/json;charset=utf-8'
               )
@@ -168,37 +181,35 @@ export function BusinessLedger({
             className="btn-black"
             onClick={() =>
               downloadTextFile(
-                'Sartoria-AI-定制业务专题台账.csv',
+                'Sartoria-AI-定制项目档案.csv',
                 buildLedgerCsv(records),
                 'text/csv;charset=utf-8'
               )
             }
           >
             <Download size={14} />
-            <span>导出 CSV 台账</span>
+            <span>导出 CSV</span>
           </button>
         </div>
       </div>
 
-      {/* Minimal 4-KPI Strip */}
+      {/* 4 Crisp Tabular KPIs */}
       <div className="kpi-strip">
         <div className="kpi-card">
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>归档项目</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>归档项目</div>
           <div className="kpi-num">{records.length}</div>
         </div>
         <div className="kpi-card">
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>平均资产契合度</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>待人工复核</div>
+          <div className="kpi-num">{pendingReviewCount}</div>
+        </div>
+        <div className="kpi-card">
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>平均契合度</div>
           <div className="kpi-num">{avgMatch}%</div>
         </div>
         <div className="kpi-card">
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>全流程变更留痕</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>变更留痕</div>
           <div className="kpi-num">{totalActions}</div>
-        </div>
-        <div className="kpi-card">
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>数据与合规状态</div>
-          <div className="kpi-num" style={{ fontSize: 18, paddingTop: 6, color: 'var(--pass)' }}>
-            静态模拟 · 人工终审
-          </div>
         </div>
       </div>
 
@@ -208,40 +219,56 @@ export function BusinessLedger({
             <table className="clean-table">
               <thead>
                 <tr>
-                  <th>项目与客户</th>
-                  <th>匹配静态资产</th>
+                  <th>项目</th>
+                  <th>匹配资产</th>
                   <th>契合度</th>
-                  <th>复核状态</th>
+                  <th>状态</th>
                 </tr>
               </thead>
               <tbody>
                 {records.map((rec) => {
                   const pat = PATTERNS.find((p) => p.id === rec.config.patternId);
                   const fab = FABRICS.find((f) => f.id === rec.config.fabricId);
-                  const scene = SCENES.find((s) => s.id === rec.config.sceneId);
                   const isSel = selected?.id === rec.id;
+                  const isNewlyArchived = highlightedRecordId === rec.id;
 
                   return (
                     <tr
                       key={rec.id}
                       className={`table-row ${isSel ? 'selected' : ''}`}
-                      onClick={() => setSelectedId(rec.id)}
+                      onClick={() =>
+                        setUserSelection({ id: rec.id, forHighlight: highlightedRecordId })
+                      }
                     >
                       <td>
-                        <div style={{ fontWeight: 600 }}>{rec.projectName}</div>
-                        <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600 }}>{rec.projectName}</span>
+                          {isNewlyArchived && (
+                            <span className="meta-badge">
+                              <span className="status-dot dot-pass" />
+                              <span>刚归档</span>
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
                           {rec.projectCode} · {rec.clientName}
                         </div>
                       </td>
-                      <td style={{ fontSize: 12, color: 'var(--ink-secondary)' }}>
+                      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
                         <div>{pat?.code ?? rec.config.patternId}</div>
-                        <div style={{ color: 'var(--ink-muted)' }}>
-                          {fab?.shortName} · {scene?.shortName}
-                        </div>
+                        <div style={{ color: 'var(--ink-muted)' }}>{fab?.shortName}</div>
                       </td>
-                      <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{rec.matchScore}%</td>
+                      <td
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontVariantNumeric: 'tabular-nums',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {rec.matchScore}%
+                      </td>
                       <td>
-                        <span className="tag-minimal">{rec.status}</span>
+                        <span className="meta-badge">{rec.status}</span>
                       </td>
                     </tr>
                   );
@@ -252,26 +279,26 @@ export function BusinessLedger({
         </section>
 
         {selected && (
-          <aside className="surface-card" aria-label="台账详情与追溯">
+          <aside className="surface-card" aria-label="档案详情与追溯">
             <div
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'flex-start',
                 gap: 10,
-                marginBottom: 14,
+                marginBottom: 16,
               }}
             >
               <div>
-                <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>
-                  {selected.projectCode} · 更新于 {new Date(selected.updatedAt).toLocaleString('zh-CN')}
+                <div style={{ fontSize: 12, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {selected.projectCode}
                 </div>
-                <h2 style={{ fontSize: 16, fontWeight: 600, marginTop: 2 }}>{selected.projectName}</h2>
+                <h2 style={{ fontSize: 16.5, fontWeight: 600, marginTop: 2 }}>{selected.projectName}</h2>
               </div>
               <button
                 type="button"
                 className="btn-outline no-print"
-                style={{ padding: '6px 11px', fontSize: 12 }}
+                style={{ padding: '6px 12px', fontSize: 12.5 }}
                 onClick={() => onLoadRecordIntoStudio(selected)}
               >
                 <span>回选配室修改</span>
@@ -279,36 +306,27 @@ export function BusinessLedger({
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {/* 1. 回看原始需求与待核实提示 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="ledger-block">
                 <div className="ledger-block-title">
-                  <span>1. 回看原始需求</span>
-                  <span
-                    className={`prov-pill ${
-                      selected.deconstructed.colorSpecifiedByUser ? 'prov-user' : 'prov-human'
-                    }`}
-                  >
-                    {selected.deconstructed.colorSpecifiedByUser ? '已表达色彩倾向' : '未定色 · 待人工核色'}
+                  <span>原始需求</span>
+                  <span className="meta-badge">
+                    <span
+                      className={`status-dot ${
+                        selected.deconstructed.colorSpecifiedByUser ? 'dot-pass' : 'dot-caution'
+                      }`}
+                    />
+                    <span>{selected.deconstructed.colorSpecifiedByUser ? '已表达色彩' : '待人工核色'}</span>
                   </span>
                 </div>
-                <p style={{ fontSize: 12.5, color: 'var(--ink-secondary)', lineHeight: 1.6 }}>
+                <p style={{ fontSize: 13, color: 'var(--ink-secondary)', lineHeight: 1.65 }}>
                   “{selected.requirementInput.rawNarrative}”
                 </p>
-                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 8 }}>
-                  {selected.deconstructed.emotionTags.map((t) => (
-                    <span key={t} className="tag-minimal">
-                      #{t}
-                    </span>
-                  ))}
-                </div>
               </div>
 
-              {/* 2. 匹配了哪些静态模拟资源（四类全展示） */}
               <div className="ledger-block">
                 <div className="ledger-block-title">
-                  <span>2. 匹配的四类静态模拟资产</span>
-                  <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>非真实生产数据</span>
+                  <span>匹配资产</span>
                 </div>
                 <div className="ledger-asset-list">
                   <div>
@@ -322,46 +340,53 @@ export function BusinessLedger({
                   <div>
                     <strong>工艺：</strong>
                     {selectedCrafts.length > 0
-                      ? selectedCrafts.map((c) => `${c.code} ${c.shortName}`).join(' / ')
+                      ? selectedCrafts.map((c) => c.shortName).join(' / ')
                       : '净面极简精工'}
                   </div>
                   <div>
-                    <strong>历史案例：</strong>
+                    <strong>案例：</strong>
                     {selectedCases.length > 0
                       ? selectedCases.map((hc) => `${hc.code} ${hc.title}`).join('；')
                       : '—'}
                   </div>
                   <div>
                     <strong>场景：</strong>
-                    {selectedScene?.name ?? selected.config.sceneId}
+                    {selectedScene?.shortName ?? selected.config.sceneId}
                   </div>
                 </div>
               </div>
 
-              {/* 3. 在线编辑（显式保存并记录变更 Diff） */}
               <div className="ledger-block no-print">
                 <div className="ledger-block-title">
-                  <span>3. 人工编辑与复核流转（不含报价/下单）</span>
+                  <span>人工复核与编辑</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div>
-                    <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                    <label
+                      htmlFor="ledger-project-name"
+                      style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}
+                    >
                       项目名称
                     </label>
                     <input
+                      id="ledger-project-name"
                       className="clean-input"
-                      style={{ padding: '7px 10px', fontSize: 12.5 }}
+                      style={{ background: 'var(--bg-page)', padding: '8px 10px', fontSize: 13 }}
                       value={draftProjectName}
                       onChange={(e) => updateDraft({ projectName: e.target.value })}
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                    <label
+                      htmlFor="ledger-client-name"
+                      style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}
+                    >
                       客户称呼
                     </label>
                     <input
+                      id="ledger-client-name"
                       className="clean-input"
-                      style={{ padding: '7px 10px', fontSize: 12.5 }}
+                      style={{ background: 'var(--bg-page)', padding: '8px 10px', fontSize: 13 }}
                       value={draftClientName}
                       onChange={(e) => updateDraft({ clientName: e.target.value })}
                     />
@@ -369,12 +394,16 @@ export function BusinessLedger({
                 </div>
 
                 <div style={{ marginBottom: 8 }}>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
-                    人工流转状态
+                  <label
+                    htmlFor="ledger-status"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}
+                  >
+                    复核状态
                   </label>
                   <select
+                    id="ledger-status"
                     className="clean-select"
-                    style={{ padding: '7px 10px', fontSize: 12.5 }}
+                    style={{ background: 'var(--bg-page)', padding: '8px 10px', fontSize: 13 }}
                     value={draftStatus}
                     onChange={(e) => updateDraft({ status: e.target.value as LedgerReviewStatus })}
                   >
@@ -387,12 +416,16 @@ export function BusinessLedger({
                 </div>
 
                 <div style={{ marginBottom: 10 }}>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
-                    专员复核备注（记录线下核色、量体与改版意见）
+                  <label
+                    htmlFor="ledger-notes"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}
+                  >
+                    复核备注
                   </label>
                   <textarea
+                    id="ledger-notes"
                     className="clean-textarea"
-                    style={{ minHeight: 74, fontSize: 12.5, padding: '8px 10px' }}
+                    style={{ background: 'var(--bg-page)', minHeight: 74, fontSize: 13, padding: '8px 10px' }}
                     value={draftNotes}
                     onChange={(e) => updateDraft({ specialistNotes: e.target.value })}
                   />
@@ -401,30 +434,29 @@ export function BusinessLedger({
                 <button
                   type="button"
                   className="btn-black"
-                  style={{ width: '100%', padding: '8px 14px', fontSize: 12.5 }}
+                  style={{ width: '100%', padding: '9px 14px', fontSize: 13 }}
                   disabled={!hasPendingEdits}
                   onClick={handleSaveEdits}
                 >
                   {savedFlag ? <Check size={14} /> : <Save size={14} />}
-                  <span>{savedFlag ? '已保存并记录修改轨迹 ✓' : '保存编辑并记录变更轨迹'}</span>
+                  <span>{savedFlag ? '已保存变更' : '保存并记录轨迹'}</span>
                 </button>
               </div>
 
-              {/* 4. 改过什么：全流程动作与 Diff 留痕 */}
               <div>
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    fontSize: 12,
+                    fontSize: 12.5,
                     fontWeight: 600,
                     color: 'var(--ink-muted)',
                     marginBottom: 10,
                   }}
                 >
                   <Clock size={13} />
-                  <span>4. 修改轨迹与操作留痕（{selected.auditLogs.length} 条）</span>
+                  <span>变更记录 ({selected.auditLogs.length})</span>
                 </div>
 
                 <div
@@ -432,7 +464,7 @@ export function BusinessLedger({
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 10,
-                    maxHeight: 260,
+                    maxHeight: 240,
                     overflowY: 'auto',
                   }}
                 >
@@ -445,14 +477,14 @@ export function BusinessLedger({
                         style={{
                           borderLeft: '2px solid var(--border-medium)',
                           paddingLeft: 10,
-                          fontSize: 12,
+                          fontSize: 12.5,
                         }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                           <strong>
-                            [{log.stage}] {log.action}
+                            {log.stage} · {log.action}
                           </strong>
-                          <span style={{ fontSize: 11, color: 'var(--ink-muted)', flexShrink: 0 }}>
+                          <span style={{ fontSize: 11.5, color: 'var(--ink-muted)', flexShrink: 0 }}>
                             {new Date(log.timestamp).toLocaleTimeString('zh-CN', {
                               hour: '2-digit',
                               minute: '2-digit',
@@ -461,12 +493,9 @@ export function BusinessLedger({
                         </div>
                         {log.diffSummary && (
                           <div className="diff-pill" style={{ marginTop: 4 }}>
-                            变更：{log.diffSummary}
+                            {log.diffSummary}
                           </div>
                         )}
-                        <div style={{ color: 'var(--ink-muted)', fontSize: 11.5, marginTop: 2 }}>
-                          {log.detail} · {log.actor}
-                        </div>
                       </div>
                     ))}
                 </div>

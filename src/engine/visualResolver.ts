@@ -38,41 +38,63 @@ export function resolveStageVisual(config: ConfigurationState): ResolvedStageVis
 
   let heroImage = scene.fallbackImage;
   let isExact = false;
-  let previewBadge = `${scene.shortName} · ${fabric.shortName}`;
 
-  if (isOfficialMensJacket) {
-    if (scene.id === 'scene-bund-protocol') {
-      heroImage = '/assets/case2-protocol-navy.jpg';
-      isExact = false;
-      previewBadge = `正式礼厅氛围 · ${fabric.colorName}`;
-    } else if (scene.id === 'scene-lujiazui-summit') {
+  // Every scene selection resolves to its genuine scene photography,
+  // refined by garment silhouette & color-family photographic variants.
+  if (scene.id === 'scene-studio-minimal') {
+    if (isStageTwoPiece) {
+      heroImage = '/assets/courtyard-garden-soiree.jpg';
+      isExact = fabric.id === 'fab-official-ivory-rose-stage';
+    } else if (isOfficialShawl) {
+      if (fabric.id === 'fab-suzhou-moonlight-white') {
+        heroImage = '/assets/case1-bund-moonlight-white.jpg';
+        isExact = true;
+      } else if (fabric.id === 'fab-xiangyun-crimson-velvet') {
+        heroImage = '/assets/case1-bund-crimson-velvet.jpg';
+        isExact = true;
+      } else {
+        heroImage = '/assets/case1-salon-obsidian-gold.jpg';
+        isExact = fabric.id === 'fab-official-plum-song';
+      }
+    } else if (isUniform) {
       heroImage =
         fabric.colorFamily === 'stone_gray'
           ? '/assets/case2-lujiazui-stonegray.jpg'
           : fabric.colorFamily === 'pine_green'
             ? '/assets/case2-lujiazui-pinegreen.jpg'
             : '/assets/case2-lujiazui-navy.jpg';
-      isExact = false;
-      previewBadge = `金融峰会场景 · ${fabric.shortName}`;
+      isExact = ['fab-bund-navy-wool130', 'fab-shikumen-stone-gray', 'fab-shanghai-pine-green'].includes(
+        fabric.id
+      );
+    } else if (silhouette === 'gown_column') {
+      heroImage =
+        fabric.id === 'fab-suzhou-moonlight-white'
+          ? '/assets/case1-bund-moonlight-white.jpg'
+          : fabric.id === 'fab-xiangyun-crimson-velvet'
+            ? '/assets/case1-bund-crimson-velvet.jpg'
+            : '/assets/case1-bund-obsidian-gold.jpg';
+      isExact = [
+        'fab-song-obsidian-gold',
+        'fab-suzhou-moonlight-white',
+        'fab-xiangyun-crimson-velvet',
+      ].includes(fabric.id);
     } else {
+      // Official jackets in minimal studio
       heroImage = '/assets/official1-studio-jacket.jpg';
-      isExact =
-        fabric.id === 'fab-official-silk-jacquard-subtle' ||
-        fabric.id === 'fab-official-acetate-jacquard' ||
-        fabric.id === 'fab-official-xiangyun-matte';
-      previewBadge = `${scene.shortName} · ${fabric.shortName}`;
+      isExact = fabric.id === 'fab-official-silk-jacquard-subtle';
     }
-  } else if (isStageTwoPiece) {
-    if (scene.id === 'scene-bund-banquet') {
-      heroImage = '/assets/case1-bund-moonlight-white.jpg';
-      isExact = false;
-      previewBadge = `晚宴氛围 · ${fabric.shortName}`;
-    } else {
-      heroImage = '/assets/courtyard-garden-soiree.jpg';
-      isExact = fabric.id === 'fab-official-ivory-rose-stage';
-      previewBadge = `户外舞台氛围 · ${fabric.shortName}`;
-    }
-  } else if (isOfficialShawl) {
+  } else if (scene.id === 'scene-bund-protocol') {
+    heroImage =
+      fabric.colorFamily === 'stone_gray'
+        ? '/assets/case2-lujiazui-stonegray.jpg'
+        : fabric.colorFamily === 'pine_green'
+          ? '/assets/case2-lujiazui-pinegreen.jpg'
+          : '/assets/case2-protocol-navy.jpg';
+    isExact = fabric.id === 'fab-bund-navy-wool130';
+  } else if (scene.id === 'scene-outdoor-stage') {
+    heroImage = '/assets/courtyard-garden-soiree.jpg';
+    isExact = fabric.id === 'fab-official-ivory-rose-stage';
+  } else if (scene.id === 'scene-jingan-salon') {
     if (fabric.id === 'fab-suzhou-moonlight-white') {
       heroImage = '/assets/case1-bund-moonlight-white.jpg';
       isExact = true;
@@ -81,45 +103,10 @@ export function resolveStageVisual(config: ConfigurationState): ResolvedStageVis
       isExact = true;
     } else {
       heroImage = '/assets/case1-salon-obsidian-gold.jpg';
-      isExact =
-        fabric.id === 'fab-official-plum-song' || fabric.id === 'fab-song-obsidian-gold';
+      isExact = fabric.id === 'fab-official-plum-song' || fabric.id === 'fab-song-obsidian-gold';
     }
-    previewBadge = `${scene.shortName} · ${fabric.shortName}`;
-  } else if (isUniform) {
-    if (scene.id === 'scene-bund-protocol') {
-      heroImage =
-        fabric.id === 'fab-shikumen-stone-gray'
-          ? '/assets/case2-lujiazui-stonegray.jpg'
-          : fabric.id === 'fab-shanghai-pine-green'
-            ? '/assets/case2-lujiazui-pinegreen.jpg'
-            : '/assets/case2-protocol-navy.jpg';
-      isExact = fabric.id === 'fab-bund-navy-wool130';
-    } else if (scene.id === 'scene-studio-minimal') {
-      heroImage = '/assets/official1-studio-jacket.jpg';
-      isExact = false;
-    } else {
-      heroImage =
-        fabric.id === 'fab-shikumen-stone-gray'
-          ? '/assets/case2-lujiazui-stonegray.jpg'
-          : fabric.id === 'fab-shanghai-pine-green'
-            ? '/assets/case2-lujiazui-pinegreen.jpg'
-            : '/assets/case2-lujiazui-navy.jpg';
-      isExact = [
-        'fab-bund-navy-wool130',
-        'fab-shikumen-stone-gray',
-        'fab-shanghai-pine-green',
-      ].includes(fabric.id);
-    }
-    previewBadge = `${scene.shortName} · ${fabric.shortName}`;
-  } else {
-    // Evening gown
-    if (scene.id === 'scene-outdoor-stage') {
-      heroImage = '/assets/courtyard-garden-soiree.jpg';
-      isExact = true;
-    } else if (scene.id === 'scene-jingan-salon') {
-      heroImage = '/assets/case1-salon-obsidian-gold.jpg';
-      isExact = fabric.id === 'fab-song-obsidian-gold';
-    } else if (fabric.id === 'fab-suzhou-moonlight-white') {
+  } else if (scene.id === 'scene-bund-banquet') {
+    if (fabric.id === 'fab-suzhou-moonlight-white') {
       heroImage = '/assets/case1-bund-moonlight-white.jpg';
       isExact = true;
     } else if (fabric.id === 'fab-xiangyun-crimson-velvet') {
@@ -129,8 +116,21 @@ export function resolveStageVisual(config: ConfigurationState): ResolvedStageVis
       heroImage = '/assets/case1-bund-obsidian-gold.jpg';
       isExact = fabric.id === 'fab-song-obsidian-gold';
     }
-    previewBadge = `${scene.shortName} · ${fabric.shortName}`;
+  } else if (scene.id === 'scene-lujiazui-summit') {
+    heroImage =
+      fabric.colorFamily === 'stone_gray'
+        ? '/assets/case2-lujiazui-stonegray.jpg'
+        : fabric.colorFamily === 'pine_green'
+          ? '/assets/case2-lujiazui-pinegreen.jpg'
+          : '/assets/case2-lujiazui-navy.jpg';
+    isExact = [
+      'fab-bund-navy-wool130',
+      'fab-shikumen-stone-gray',
+      'fab-shanghai-pine-green',
+    ].includes(fabric.id);
   }
+
+  const previewBadge = `${scene.shortName} · ${fabric.shortName}`;
 
   const craftCloseupImage =
     crafts.length > 0
@@ -139,11 +139,27 @@ export function resolveStageVisual(config: ConfigurationState): ResolvedStageVis
         ? '/assets/case2-craft-detail.jpg'
         : '/assets/case1-craft-detail.jpg';
 
+  // Perceptible, tasteful material lighting response when exploring fabrics on shared studio photography
+  const fabricFilterByFamily: Record<string, string> = {
+    earth_brown: 'sepia(0.16) contrast(1.03) brightness(0.96)',
+    stone_gray: 'saturate(0.86) brightness(1.04) contrast(0.98)',
+    ivory: 'brightness(1.06) contrast(0.97)',
+    ivory_rose: 'saturate(1.08) brightness(1.03)',
+    crimson: 'saturate(1.12) contrast(1.04)',
+    pine_green: 'hue-rotate(-8deg) saturate(1.08)',
+    navy: 'contrast(1.04) saturate(1.04)',
+    obsidian: 'contrast(1.05) brightness(0.97)',
+    neutral_silk: 'none',
+  };
+
+  const baseFilter = scene.lighting.cssFilter === 'none' ? '' : scene.lighting.cssFilter;
+  const fabricFilter = isExact ? '' : fabricFilterByFamily[fabric.colorFamily] ?? '';
+  const ambientFilter = [baseFilter, fabricFilter].filter((x) => x && x !== 'none').join(' ') || 'none';
+
   const fabricTintOverlay = isExact
     ? scene.lighting.overlayGradient
-    : `linear-gradient(155deg, ${fabric.pbr.baseColor}1f 0%, transparent 58%, ${fabric.pbr.sheenColor}1a 100%)`;
+    : `linear-gradient(145deg, ${fabric.pbr.baseColor}36 0%, transparent 55%, ${fabric.pbr.sheenColor}2b 100%)`;
 
-  // Calibrated hotspots per photography composition
   const isRightFramedStudio = heroImage === '/assets/official1-studio-jacket.jpg';
   const isRightFramedStage = heroImage === '/assets/courtyard-garden-soiree.jpg';
 
@@ -203,7 +219,7 @@ export function resolveStageVisual(config: ConfigurationState): ResolvedStageVis
     craftCloseupImage,
     isExactPhotographicVariant: isExact,
     previewBadge,
-    ambientFilter: scene.lighting.cssFilter,
+    ambientFilter,
     fabricTintOverlay,
     hotspots,
   };

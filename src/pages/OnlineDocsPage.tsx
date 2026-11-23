@@ -18,12 +18,7 @@ export function OnlineDocsPage({ onNavigate }: OnlineDocsPageProps) {
   return (
     <div className="page-wrap">
       <div className="page-head no-print">
-        <div>
-          <h1 className="page-h1">在线项目介绍文档</h1>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4 }}>
-            与 GitHub 仓库 <code>docs/Sartoria-AI-Solution-Architecture.md</code> 实时同步渲染 · 含「命题逐条响应」与独立《Agent 能力边界清单》
-          </div>
-        </div>
+        <h1 className="page-h1">项目文档</h1>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <a
@@ -31,7 +26,6 @@ export function OnlineDocsPage({ onNavigate }: OnlineDocsPageProps) {
             target="_blank"
             rel="noreferrer"
             className="btn-outline"
-            style={{ textDecoration: 'none' }}
           >
             <span>GitHub 源文件</span>
             <ArrowUpRight size={14} />
@@ -48,11 +42,11 @@ export function OnlineDocsPage({ onNavigate }: OnlineDocsPageProps) {
             }
           >
             <Download size={14} />
-            <span>下载 Markdown</span>
+            <span>下载 MD</span>
           </button>
           <button type="button" className="btn-outline" onClick={() => window.print()}>
             <Printer size={14} />
-            <span>打印 / PDF</span>
+            <span>打印</span>
           </button>
           <button
             type="button"
@@ -67,8 +61,8 @@ export function OnlineDocsPage({ onNavigate }: OnlineDocsPageProps) {
 
       <div className="docs-layout">
         <aside className="docs-toc no-print" aria-label="文档目录">
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-muted)', marginBottom: 10 }}>
-            文档目录
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-muted)', marginBottom: 10 }}>
+            目录
           </div>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {headings.map((h) => (

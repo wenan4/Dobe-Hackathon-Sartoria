@@ -368,7 +368,9 @@ export function AtelierBlueprintSVG({ pattern, fabric, crafts }: AtelierBlueprin
             领型规范
           </text>
           <text x="506" y="113" fill="#111111" fontWeight="500">
-            {pattern.collarType.slice(0, 20)}
+            {pattern.collarType.length > 16
+              ? `${pattern.collarType.slice(0, 16)}…`
+              : pattern.collarType}
           </text>
 
           <line x1="422" y1="176" x2="496" y2="176" stroke="#111111" strokeWidth="0.9" />

@@ -1,4 +1,12 @@
-import { ArrowRight, CheckCircle2, ChevronDown, HelpCircle, Sparkles } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+} from 'lucide-react';
 import { useState } from 'react';
 import { RadarChartSVG } from '../components/RadarChartSVG';
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
@@ -10,26 +18,38 @@ import type {
   SpecProvenance,
 } from '../types/sartoria';
 
+export type DeconstructStatus = 'idle' | 'analyzing' | 'ready' | 'stale';
+
 interface RequirementStudioProps {
   input: RequirementInput;
   deconstructed: DeconstructedRequirement;
-  isDeconstructing: boolean;
+  status: DeconstructStatus;
+  analysisStage: number;
+  runId: number;
   onChangeInput: (next: RequirementInput) => void;
   onSelectPresetDemo: (demo: PresetDemoCase) => void;
   onRunDeconstruct: () => void;
   onProceedToConfigurator: () => void;
 }
 
-const PROVENANCE_META: Record<SpecProvenance, { label: string; className: string }> = {
-  user_explicit: { label: '用户明确', className: 'prov-user' },
-  system_suggested: { label: '系统建议', className: 'prov-ai' },
-  needs_human_verification: { label: '待人工核实', className: 'prov-human' },
+const PROVENANCE_META: Record<SpecProvenance, { label: string; dotClass: string }> = {
+  user_explicit: { label: '用户明确', dotClass: 'dot-pass' },
+  system_suggested: { label: '系统建议', dotClass: 'dot-info' },
+  needs_human_verification: { label: '人工核实', dotClass: 'dot-caution' },
 };
+
+const ANALYSIS_STAGES = [
+  '识别品类、体态特征与穿着痛点',
+  '转译 8 项专业参数与 6 维审美',
+  '划分用户明确、系统建议与人工核实边界',
+];
 
 export function RequirementStudio({
   input,
   deconstructed,
-  isDeconstructing,
+  status,
+  analysisStage,
+  runId,
   onChangeInput,
   onSelectPresetDemo,
   onRunDeconstruct,
@@ -37,23 +57,18 @@ export function RequirementStudio({
 }: RequirementStudioProps) {
   const [outputTab, setOutputTab] = useState<'official8' | 'radar6'>('official8');
 
+  const isAnalyzing = status === 'analyzing';
+  const hasResult = status === 'ready' || status === 'stale';
+  const categorySpec = deconstructed.officialSpecs.find((s) => s.key === 'category')?.value ?? '定制成衣';
+
   return (
     <div className="page-wrap">
       <div className="page-head">
-        <div>
-          <h1 className="page-h1">定制需求拆解</h1>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4 }}>
-            自然语言需求 → 8 项专业转译 + 6 维审美标签 · 严格区分「用户明确 / 系统建议 / 人工核实」
-          </div>
-        </div>
-        <button type="button" className="btn-black" onClick={onProceedToConfigurator}>
-          <span>进入场景选配</span>
-          <ArrowRight size={15} />
-        </button>
+        <h1 className="page-h1">需求拆解</h1>
       </div>
 
-      {/* Quick Case Selector Pills — Primary Demo Case 6 + Case 3 Two-Piece + Additional Cases */}
-      <div className="case-chip-row" role="group" aria-label="快速体验案例">
+      {/* Uniform Case Selector Pills */}
+      <div className="case-chip-row" role="group" aria-label="预设案例">
         {PRESET_DEMO_CASES.map((demo) => (
           <button
             key={demo.id}
@@ -67,68 +82,77 @@ export function RequirementStudio({
       </div>
 
       <div className="deconstruct-grid">
-        {/* Left: Ultra-clean Natural Language Input */}
+        {/* Left: Clean Natural Language Input */}
         <section className="surface-card" aria-label="客户需求录入">
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 12,
-            }}
-          >
-            <h2 style={{ fontSize: 15, fontWeight: 600 }}>客户原始需求</h2>
-            <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>支持自然语言直接输入</span>
-          </div>
+          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>客户需求</h2>
 
           <textarea
             id="req-narrative"
             className="clean-textarea"
-            style={{ minHeight: 164, fontSize: 14 }}
+            style={{ minHeight: 176 }}
             value={input.rawNarrative}
             onChange={(e) =>
               onChangeInput({ ...input, rawNarrative: e.target.value, presetDemoId: undefined })
             }
-            placeholder="例如：想要定制一件简约大气的新中式外套，正式一些，身形偏高肩背宽厚，希望不压肩不卡手臂，宽松有质感..."
+            placeholder="输入客户的口语化定制需求，例如风格、场合、身形特征与穿着体感..."
           />
 
           <div
             style={{
               display: 'flex',
-              justifyContent: 'space-between',
+              justifyContent: 'flex-end',
               alignItems: 'center',
-              marginTop: 14,
-              gap: 12,
+              marginTop: 16,
+              gap: 10,
             }}
           >
-            <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
-              {deconstructed.engineUsed === 'llm_api' ? 'LLM 增强模式' : '本地领域语义实时解析'}
-            </span>
             <button
               type="button"
-              className="btn-black"
-              disabled={isDeconstructing || !input.rawNarrative.trim()}
+              className={status === 'ready' ? 'btn-outline' : 'btn-black'}
+              disabled={isAnalyzing || !input.rawNarrative.trim()}
               onClick={onRunDeconstruct}
             >
-              <Sparkles size={14} />
-              <span>{isDeconstructing ? '拆解中…' : '智能拆解需求'}</span>
+              {isAnalyzing ? (
+                <>
+                  <Loader2 size={15} className="spin-icon" />
+                  <span>正在拆解…</span>
+                </>
+              ) : status === 'ready' ? (
+                <>
+                  <RefreshCw size={14} />
+                  <span>重新拆解</span>
+                </>
+              ) : status === 'stale' ? (
+                <>
+                  <Sparkles size={14} />
+                  <span>重新拆解需求</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} />
+                  <span>智能拆解需求</span>
+                </>
+              )}
             </button>
           </div>
 
-          {/* Progressive Disclosure: Optional Context & Project Fields */}
           <details className="disclosure">
             <summary>
-              <span>补充项目信息与场景（可选）</span>
+              <span>补充项目与场景信息</span>
               <ChevronDown size={14} />
             </summary>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                  <label
+                    htmlFor="req-project-name"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 5 }}
+                  >
                     项目名称
                   </label>
                   <input
+                    id="req-project-name"
                     className="clean-input"
                     value={input.projectName}
                     onChange={(e) =>
@@ -137,10 +161,14 @@ export function RequirementStudio({
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                  <label
+                    htmlFor="req-client-name"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 5 }}
+                  >
                     客户称呼
                   </label>
                   <input
+                    id="req-client-name"
                     className="clean-input"
                     value={input.clientName}
                     onChange={(e) =>
@@ -152,10 +180,14 @@ export function RequirementStudio({
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                 <div>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                  <label
+                    htmlFor="req-business-type"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 5 }}
+                  >
                     业务类型
                   </label>
                   <select
+                    id="req-business-type"
                     className="clean-select"
                     value={input.businessType}
                     onChange={(e) =>
@@ -166,16 +198,20 @@ export function RequirementStudio({
                       })
                     }
                   >
-                    <option value="private_couture">个人高级定制</option>
+                    <option value="private_couture">个人高定</option>
                     <option value="corporate_uniform">团体职业服</option>
                   </select>
                 </div>
 
                 <div>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                  <label
+                    htmlFor="req-season"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 5 }}
+                  >
                     主穿季候
                   </label>
                   <select
+                    id="req-season"
                     className="clean-select"
                     value={input.season}
                     onChange={(e) =>
@@ -195,10 +231,14 @@ export function RequirementStudio({
                 </div>
 
                 <div>
-                  <label style={{ fontSize: 11.5, color: 'var(--ink-muted)', display: 'block', marginBottom: 4 }}>
+                  <label
+                    htmlFor="req-scene"
+                    style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 5 }}
+                  >
                     穿搭场景
                   </label>
                   <select
+                    id="req-scene"
                     className="clean-select"
                     value={input.targetSceneId}
                     onChange={(e) => onChangeInput({ ...input, targetSceneId: e.target.value })}
@@ -215,201 +255,330 @@ export function RequirementStudio({
           </details>
         </section>
 
-        {/* Right: Clean Structured Translation Card (Official 8-Spec + 6-Dimension Toggle) */}
-        <section className="surface-card" aria-label="专业语言转化结果">
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16,
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <h2 style={{ fontSize: 15, fontWeight: 600 }}>专业语言转化与六维审美</h2>
-              <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
-                {deconstructed.aestheticArchetype}
-              </div>
-            </div>
-
-            <div className="segmented segmented-solid" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={outputTab === 'official8'}
-                className={`seg-btn ${outputTab === 'official8' ? 'active' : ''}`}
-                onClick={() => setOutputTab('official8')}
+        {/* Right: Idle -> Analyzing -> Result */}
+        <section aria-label="拆解结果">
+          <AnimatePresence mode="wait">
+            {status === 'idle' && (
+              <motion.div
+                key="idle"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="analysis-placeholder"
               >
-                8 项专业拆解
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={outputTab === 'radar6'}
-                className={`seg-btn ${outputTab === 'radar6' ? 'active' : ''}`}
-                onClick={() => setOutputTab('radar6')}
-              >
-                6 维情绪雷达
-              </button>
-            </div>
-          </div>
+                <div className="analysis-placeholder-icon">
+                  <Sparkles size={18} strokeWidth={1.7} />
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>等待拆解需求</div>
+                <p style={{ fontSize: 13.5, color: 'var(--ink-secondary)', maxWidth: 340 }}>
+                  点击左侧「智能拆解需求」，将自然语言转化为定制专业参数与边界清单。
+                </p>
+                <div className="analysis-steps-list">
+                  {ANALYSIS_STAGES.map((label, idx) => (
+                    <div key={label} className="analysis-step-row">
+                      <span
+                        style={{
+                          width: 20,
+                          height: 20,
+                          borderRadius: '50%',
+                          border: '1px solid var(--border-medium)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 11,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {idx + 1}
+                      </span>
+                      <span>{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
 
-          {outputTab === 'official8' ? (
-            <>
-              <div className="spec-8-grid">
-                {deconstructed.officialSpecs.map((item) => {
-                  const prov = PROVENANCE_META[item.provenance ?? 'system_suggested'];
-                  return (
-                    <div key={item.key} className="spec-cell">
-                      <div className="spec-cell-head">
-                        <span className="spec-label">【{item.label}】</span>
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                          <span className={`prov-pill ${prov.className}`}>{prov.label}</span>
-                          {item.ergonomicCue && <span className="spec-cue">{item.ergonomicCue}</span>}
+            {status === 'analyzing' && (
+              <motion.div
+                key="analyzing"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="analysis-placeholder"
+                role="status"
+                aria-live="polite"
+              >
+                <div className="analysis-placeholder-icon">
+                  <Loader2 size={18} className="spin-icon" />
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>正在拆解需求…</div>
+                <div className="analysis-steps-list">
+                  {ANALYSIS_STAGES.map((label, idx) => {
+                    const stepNum = idx + 1;
+                    const isDone = analysisStage > stepNum;
+                    const isActive = analysisStage === stepNum;
+                    return (
+                      <div
+                        key={label}
+                        className={`analysis-step-row ${isDone ? 'done' : isActive ? 'active' : ''}`}
+                      >
+                        {isDone ? (
+                          <Check size={15} strokeWidth={2.4} style={{ flexShrink: 0 }} />
+                        ) : isActive ? (
+                          <Loader2 size={15} className="spin-icon" style={{ flexShrink: 0 }} />
+                        ) : (
+                          <span
+                            style={{
+                              width: 15,
+                              height: 15,
+                              borderRadius: '50%',
+                              border: '1px solid var(--border-medium)',
+                              display: 'inline-block',
+                              flexShrink: 0,
+                            }}
+                          />
+                        )}
+                        <span>{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
+            {hasResult && (
+              <motion.div
+                key={`result-${runId}`}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.26, ease: [0.25, 0.1, 0.25, 1] }}
+                className="surface-card"
+              >
+                {status === 'stale' && (
+                  <div className="stale-banner">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <span className="status-dot dot-caution" />
+                      需求内容已更改，重新拆解以更新结果
+                    </span>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      style={{ padding: '4px 12px', fontSize: 12 }}
+                      onClick={onRunDeconstruct}
+                    >
+                      立即更新
+                    </button>
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 16,
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className="status-dot dot-pass" />
+                    <h2 style={{ fontSize: 15, fontWeight: 600 }}>拆解结果</h2>
+                  </div>
+
+                  <div className="segmented segmented-solid" role="tablist">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={outputTab === 'official8'}
+                      className={`seg-btn ${outputTab === 'official8' ? 'active' : ''}`}
+                      onClick={() => setOutputTab('official8')}
+                    >
+                      8 项参数
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={outputTab === 'radar6'}
+                      className={`seg-btn ${outputTab === 'radar6' ? 'active' : ''}`}
+                      onClick={() => setOutputTab('radar6')}
+                    >
+                      6 维雷达
+                    </button>
+                  </div>
+                </div>
+
+                {outputTab === 'official8' ? (
+                  <div className="spec-8-grid">
+                    {deconstructed.officialSpecs.map((item) => {
+                      const prov = PROVENANCE_META[item.provenance ?? 'system_suggested'];
+                      return (
+                        <div key={item.key} className="spec-cell">
+                          <div className="spec-cell-head">
+                            <span className="spec-label">{item.label}</span>
+                            <span className="meta-badge">
+                              <span className={`status-dot ${prov.dotClass}`} />
+                              <span>{prov.label}</span>
+                            </span>
+                          </div>
+                          <div className="spec-value">{item.value}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 16,
+                        alignItems: 'center',
+                        marginBottom: 16,
+                      }}
+                    >
+                      <RadarChartSVG dimensions={deconstructed.dimensions} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>
+                          {deconstructed.aestheticArchetype}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {deconstructed.emotionTags.map((tag) => (
+                            <span key={tag} className="tag-minimal">
+                              #{tag}
+                            </span>
+                          ))}
                         </div>
                       </div>
-                      <div className="spec-value">{item.value}</div>
                     </div>
-                  );
-                })}
-              </div>
 
+                    <div className="spec-8-grid">
+                      {deconstructed.dimensions.map((d) => (
+                        <div key={d.key} className="spec-cell">
+                          <div className="spec-cell-head">
+                            <span className="spec-label">{d.label}</span>
+                            <span
+                              style={{
+                                fontSize: 12,
+                                color: 'var(--ink-muted)',
+                                fontFamily: 'var(--font-mono)',
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              {d.score}
+                            </span>
+                          </div>
+                          <div className="spec-value" style={{ fontSize: 13 }}>
+                            {d.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+      </div>
+
+      {/* Revealed after clicking Smart Deconstruct */}
+      <AnimatePresence>
+        {hasResult && (
+          <motion.div
+            key={`buckets-${runId}`}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.28, delay: 0.05, ease: [0.25, 0.1, 0.25, 1] }}
+          >
+            <section className="surface-card" style={{ marginTop: 20 }} aria-label="信息边界划分">
               <div
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  marginTop: 18,
+                  gap: 12,
+                  marginBottom: 14,
                   flexWrap: 'wrap',
-                  gap: 10,
                 }}
               >
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {deconstructed.emotionTags.slice(0, 4).map((tag) => (
-                    <span key={tag} className="tag-minimal">
-                      #{tag}
+                <h2 style={{ fontSize: 15, fontWeight: 600 }}>信息边界划分</h2>
+                {!deconstructed.colorSpecifiedByUser && (
+                  <span className="meta-badge">
+                    <span className="status-dot dot-caution" />
+                    <span>未指定色彩 · 待人工核色</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="bucket-3-grid">
+                <div className="bucket-col">
+                  <div className="bucket-head">
+                    <span className="status-dot dot-pass" />
+                    <span>用户明确</span>
+                    <span className="bucket-count">
+                      {deconstructed.threeBuckets.userExplicit.length}
                     </span>
-                  ))}
+                  </div>
+                  <ul className="bucket-list">
+                    {deconstructed.threeBuckets.userExplicit.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
                 </div>
-                <button type="button" className="btn-outline" onClick={onProceedToConfigurator}>
-                  <span>检索四类资产并选配</span>
-                  <ArrowRight size={14} />
+
+                <div className="bucket-col">
+                  <div className="bucket-head">
+                    <span className="status-dot dot-info" />
+                    <span>系统建议</span>
+                    <span className="bucket-count">
+                      {deconstructed.threeBuckets.systemSuggested.length}
+                    </span>
+                  </div>
+                  <ul className="bucket-list">
+                    {deconstructed.threeBuckets.systemSuggested.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="bucket-col">
+                  <div className="bucket-head">
+                    <span className="status-dot dot-caution" />
+                    <span>人工核实</span>
+                    <span className="bucket-count">
+                      {deconstructed.threeBuckets.needsHumanVerification.length}
+                    </span>
+                  </div>
+                  <ul className="bucket-list">
+                    {deconstructed.threeBuckets.needsHumanVerification.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </section>
+
+            {/* Step 1 -> Step 2 Handoff Bar */}
+            <div className="flow-handoff-bar">
+              <div className="flow-handoff-summary">
+                <span className="status-dot dot-pass" />
+                <span>已将「{categorySpec}」需求转译完成，并筛选出适配的面料与版型。</span>
+              </div>
+              <div className="flow-handoff-actions">
+                <button type="button" className="btn-black" onClick={onProceedToConfigurator}>
+                  <span>下一步：进入场景选配</span>
+                  <ArrowRight size={15} />
                 </button>
               </div>
-            </>
-          ) : (
-            <div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 16,
-                  alignItems: 'center',
-                  marginBottom: 16,
-                }}
-              >
-                <RadarChartSVG dimensions={deconstructed.dimensions} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{deconstructed.aestheticArchetype}</div>
-                  <p style={{ fontSize: 12.5, color: 'var(--ink-secondary)', lineHeight: 1.6 }}>
-                    {deconstructed.targetAudienceInsight}
-                  </p>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {deconstructed.emotionTags.map((tag) => (
-                      <span key={tag} className="tag-minimal">
-                        #{tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="spec-8-grid">
-                {deconstructed.dimensions.map((d) => (
-                  <div key={d.key} className="spec-cell">
-                    <div className="spec-cell-head">
-                      <span className="spec-label">{d.label}</span>
-                      <span style={{ fontSize: 11.5, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>
-                        {d.score}
-                      </span>
-                    </div>
-                    <div className="spec-value" style={{ fontSize: 12.5 }}>
-                      {d.value}
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
-          )}
-        </section>
-      </div>
-
-      {/* Explicit 3-Bucket Epistemic Boundary Separation Panel */}
-      <section className="surface-card" style={{ marginTop: 24 }} aria-label="需求归属与人工核实边界">
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 16,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
-            <h2 style={{ fontSize: 15, fontWeight: 600 }}>三类信息分离（事实 / 建议 / 人工核实）</h2>
-            <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
-              严格避免 AI 越界替客户拍板：颜色未指定不代客确定，松弛余量不凭空报具体厘米数
-            </div>
-          </div>
-          {!deconstructed.colorSpecifiedByUser && (
-            <span className="prov-pill prov-human">客户未指定色彩 · 保留人工核色</span>
-          )}
-        </div>
-
-        <div className="bucket-3-grid">
-          <div className="bucket-col bucket-user">
-            <div className="bucket-head">
-              <CheckCircle2 size={14} />
-              <span>用户明确说的</span>
-              <span className="bucket-count">{deconstructed.threeBuckets.userExplicit.length}</span>
-            </div>
-            <ul className="bucket-list">
-              {deconstructed.threeBuckets.userExplicit.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="bucket-col bucket-ai">
-            <div className="bucket-head">
-              <Sparkles size={14} />
-              <span>系统建议的（企划参考）</span>
-              <span className="bucket-count">{deconstructed.threeBuckets.systemSuggested.length}</span>
-            </div>
-            <ul className="bucket-list">
-              {deconstructed.threeBuckets.systemSuggested.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="bucket-col bucket-human">
-            <div className="bucket-head">
-              <HelpCircle size={14} />
-              <span>还要人工核实的（不可越界）</span>
-              <span className="bucket-count">{deconstructed.threeBuckets.needsHumanVerification.length}</span>
-            </div>
-            <ul className="bucket-list">
-              {deconstructed.threeBuckets.needsHumanVerification.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </section>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

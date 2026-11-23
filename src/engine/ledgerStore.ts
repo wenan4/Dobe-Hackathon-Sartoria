@@ -13,7 +13,7 @@ import { evaluateFeasibility, evaluateMatch } from './matchingEngine';
 import { generateVisualPromptPack } from './promptEngine';
 import { generateProposalDraft } from './proposalEngine';
 
-const STORAGE_KEY = 'sartoria_ai_ledger_v3';
+const STORAGE_KEY = 'sartoria_ai_ledger_v4';
 
 function dedupeAuditLogs(logs: AuditLogEntry[]): AuditLogEntry[] {
   const seen = new Set<string>();
