@@ -16,7 +16,7 @@ import type { RequirementInput } from '../types/sartoria';
 import { evaluateDecisionConfiguration, matchDecision } from './decisionMatching';
 import {
   buildClarificationQuestions, buildLocalDecisionRequirement, constraintPredicatesConflict as conflictsWith,
-  extractRevisionConstraints, isExplicitWithdrawal,
+  constraintsConflict, extractRevisionConstraints, isExplicitWithdrawal,
 } from './requirementInterview';
 
 export interface RevisionConflict {
@@ -63,7 +63,19 @@ export function findConstraintChanges(previous: Constraint[], next: Constraint[]
 }
 
 function sameMeaning(a: Constraint, b: Constraint): boolean {
-  return a.field === b.field && a.op === b.op && a.value === b.value && a.level === b.level && a.state === b.state;
+  return a.field === b.field && a.op === b.op && a.value === b.value && a.level === b.level && a.state === b.state &&
+    Boolean(a.blocking) === Boolean(b.blocking) &&
+    (a.value !== null || (hasRecordedSource(a) === hasRecordedSource(b) &&
+      isExplicitWithdrawal(a) === isExplicitWithdrawal(b) &&
+      a.withdraws?.op === b.withdraws?.op && a.withdraws?.value === b.withdraws?.value));
+}
+
+function hasRecordedSource(constraint: Constraint): boolean {
+  return Boolean(constraint.sourceTurnId || constraint.verifiedBy);
+}
+
+function isNonblockingUnknown(constraint: Constraint): boolean {
+  return constraint.value === null && !constraint.blocking && !isExplicitWithdrawal(constraint);
 }
 
 function targetsWithdrawal(withdrawal: Constraint, existing: Constraint): boolean {
@@ -107,24 +119,34 @@ export function refreshDecisionRequirement(input: RequirementInput, previous?: D
 }
 
 function applyPatch(constraints: Constraint[], requested: Constraint[], verifiedBy: string): Constraint[] {
-  return requested.reduce((current, next) => {
+  const ordered = requested.toSorted((left, right) => Number(left.level === 'preference') - Number(right.level === 'preference'));
+  return ordered.reduce((current, next) => {
     if (isExplicitWithdrawal(next)) {
       if (!current.some((item) => targetsWithdrawal(next, item))) return current;
       return [...current.filter((item) => !targetsWithdrawal(next, item) &&
         (next.field !== item.field || item.value !== null)), next];
+    }
+    if (next.level === 'preference' && current.some((item) => item.level === 'hard' && conflictsWith(item, next))) {
+      return current;
     }
     const unchanged = current.some((item) => item.state !== 'suggested' && item.field === next.field && item.op === next.op &&
       item.value === next.value && (item.level === next.level || item.level === 'hard'));
     if (unchanged) return current;
     const retained = current.filter((item) => {
       if (item.field !== next.field) return true;
-      if (next.value === null || item.value === null) return false;
+      if (item.value === null) return next.level === 'preference' && (item.blocking || hasRecordedSource(item));
       return !conflictsWith(item, next) && (item.op !== next.op || item.value !== next.value);
     });
-    return [...retained, next.value === null
-      ? next
-      : { ...next, state: 'confirmed' as const, verifiedBy }];
+    return [...retained, { ...next, state: 'confirmed' as const, verifiedBy }];
   }, constraints);
+}
+
+function recordPendingObservations(constraints: Constraint[], observations: Constraint[], accepted: Constraint[]): Constraint[] {
+  const pending = observations.filter((next) => !accepted.some((item) => item.field === next.field && item.level !== 'preference') &&
+    !constraints.some((item) => item.field === next.field && isNonblockingUnknown(item) && hasRecordedSource(item)));
+  if (!pending.length) return constraints;
+  const fields = new Set(pending.map(({ field }) => field));
+  return [...constraints.filter((item) => !fields.has(item.field) || !isNonblockingUnknown(item)), ...pending];
 }
 
 function previewImpacts(base: CandidateCombination | null, next: CandidateCombination | null, changes: ConstraintChange[]): RevisionImpact[] {
@@ -138,7 +160,7 @@ function previewImpacts(base: CandidateCombination | null, next: CandidateCombin
   const craftChanged = !base || base.config.craftIds.join('|') !== next.config.craftIds.join('|');
   if (fabricChanged) impacts.push({ area: 'fabric', detail: '面料变化，重新核对体感、光泽与织法证据。' });
   if (craftChanged || fabricChanged) {
-    impacts.push({ area: 'craft', detail: craftChanged ? '根据新面料重选兼容工艺。' : '已用新面料复核现有工艺的兼容性。' });
+    impacts.push({ area: 'craft', detail: craftChanged ? '工艺组合变化，重新核对与版型及面料的兼容性。' : '已用新面料复核现有工艺的兼容性。' });
     impacts.push({ area: 'care', detail: '复核面料和工艺的静态洗护字段，正式洗护仍须实物测试。' });
   }
   if (!base || base.id !== next.id) impacts.push({ area: 'visual', detail: '三镜头提示词同步更新受影响的结构、材质或工艺表述。' });
@@ -171,18 +193,12 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
   const turn: RequirementTurn = { id, text: draft };
   const constraints = base.requirement.constraints;
   const observations = extractRevisionConstraints(turn);
-  const requested = observations.filter((next) => {
-    if (next.value === null) {
-      if (isExplicitWithdrawal(next) || next.blocking) return true;
-      // A restatement of documented uncertainty leaves the existing condition and its source intact.
-      const alreadyPending = constraints.some((item) => item.field === next.field && item.state === 'unknown' &&
-        item.level === 'pending' && item.value === null && !item.blocking && (item.sourceTurnId || item.verifiedBy));
-      return !alreadyPending && !observations.some((item) => item.field === next.field && item.value !== null);
-    }
-    return !constraints.some((item) => item.field === next.field && item.op === next.op &&
+  // An open choice can be documented in the next version without proposing a change to the contract.
+  const pending = observations.filter(isNonblockingUnknown);
+  const requested = observations.filter((next) => !isNonblockingUnknown(next) &&
+    (next.value === null || !constraints.some((item) => item.field === next.field && item.op === next.op &&
       item.value === next.value && (item.state === 'confirmed' || item.state === 'explicit') &&
-      (item.level === next.level || item.level === 'hard'));
-  });
+      (item.level === next.level || item.level === 'hard'))));
   const requestedPatch = requested.map((next) => ({
     field: next.field,
     previous: constraints.find((item) => isExplicitWithdrawal(next) ? targetsWithdrawal(next, item)
@@ -190,7 +206,7 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
       constraints.find((item) => item.field === next.field && item.value === null) ?? null,
     next,
   }));
-  const blocked = new Set<ConstraintField>();
+  const blocked = new Set<string>();
   const contradictory = new Set<ConstraintField>();
   const conflicts: RevisionConflict[] = [];
   for (const next of requested) {
@@ -202,18 +218,19 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     const existing = constraints.find((item) => item.level === 'hard' &&
       (withdrawal ? targetsWithdrawal(next, item) : conflictsWith(item, next)));
     if (existing) {
-      blocked.add(next.field);
+      blocked.add(next.id);
       if (!withdrawal) conflicts.push({ field: next.field,
         detail: `现有硬条件「${existing.quote ?? String(existing.value)}」与反馈「${next.quote ?? turn.text}」需要业务员裁决。` });
     }
-    if (requested.some((item) => conflictsWith(item, next))) contradictory.add(next.field);
+    if (requested.some((item) => constraintsConflict(item, next))) contradictory.add(next.field);
   }
   for (const field of contradictory) conflicts.push({ field, detail: '反馈中的条件存在冲突或表述不确定，请先澄清。' });
 
   const buildBranch = (option: RevisionOption, accepted: Constraint[]): RevisionBranch => {
-    const next = applyPatch(constraints, accepted, '定制业务专员');
+    const next = option === 'defer' ? constraints
+      : recordPendingObservations(applyPatch(constraints, accepted, '定制业务专员'), pending, accepted);
     const changes = findConstraintChanges(constraints, next);
-    const requirement = {
+    const requirement = option === 'defer' ? base.requirement : {
       ...base.requirement,
       turns: [...base.requirement.turns, turn],
       constraints: next,
@@ -228,14 +245,15 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     return {
       option, requirement, match, candidate, changes,
       impacts,
-      canConfirm: option === 'defer' || (!requested.some((item) => item.blocking) && (changes.length > 0 || recordsRetention)),
+      canConfirm: option === 'defer' || (contradictory.size === 0 && (changes.length > 0 || recordsRetention)),
     };
   };
 
   const agreed = requested.filter((item) => !contradictory.has(item.field));
-  const keep = buildBranch('keep', agreed.filter((item) => !blocked.has(item.field)));
-  const accept = buildBranch('accept', agreed);
-  for (const preferredFabric of agreed.filter((item) => item.field === 'fabric' && item.level === 'preference')) {
+  const kept = agreed.filter((item) => !blocked.has(item.id));
+  const replacements = agreed.filter((item) => blocked.has(item.id) && item.level !== 'preference');
+  const keep = buildBranch('keep', kept);
+  for (const preferredFabric of kept.filter((item) => item.field === 'fabric' && item.level === 'preference')) {
     const hardTest: DecisionRequirement = {
       ...keep.requirement,
       constraints: keep.requirement.constraints.map((item) => item.id === preferredFabric.id
@@ -253,7 +271,7 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
 
   return {
     id, baseVersionId: base.id, turn, requestedPatch, conflicts,
-    branches: [keep, ...(blocked.size > 0 ? [accept] : []), buildBranch('defer', [])],
+    branches: [keep, ...(replacements.length ? [buildBranch('accept', agreed)] : []), buildBranch('defer', [])],
   };
 }
 
@@ -267,10 +285,12 @@ export function recordDecisionRevision(preview: RevisionPreview, branch: Revisio
 
 export function appendDecisionVersion(history: DecisionHistory, version: Version): DecisionHistory {
   const latest = history.versions.at(-1);
+  const revision = version.revision;
   if ((latest?.id ?? null) !== version.parentVersionId ||
       (latest && latest.projectId !== version.projectId) ||
       version.number !== (latest?.number ?? 0) + 1 ||
-      (version.revision && history.versions.some((entry) => entry.revision?.id === version.revision?.id))) {
+      (revision && (revision.baseVersionId !== latest?.id || revision.selectedOption === 'defer' ||
+        revision.humanDecision !== 'confirmed' || history.versions.some((entry) => entry.revision?.id === revision.id)))) {
     return history;
   }
   return { ...history, versions: [...history.versions, version], feedbackDraft: '' };

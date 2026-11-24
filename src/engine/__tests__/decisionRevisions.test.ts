@@ -114,6 +114,62 @@ describe('decision preview and version snapshots', () => {
     expect(version.candidate?.config.fabricId).toBe('fab-xiangyun-crimson-velvet');
   });
 
+  it('records an open material choice alongside a confirmed change with its original quote', () => {
+    const base = startConference();
+    const original = JSON.stringify(base);
+    const { preview, branch, version } = revise(base, '数量改为四十八套。面料还没决定。', 'accept');
+    expect(preview.requestedPatch.map(({ field }) => field)).toEqual(['quantity']);
+    expect(preview.conflicts.map(({ field }) => field)).toEqual(['quantity']);
+    expect(branch.canConfirm).toBe(true);
+    expect(branch.changes.map(({ field }) => field)).toContain('fabric');
+    expect(version.requirement.constraints.filter(({ field }) => field === 'fabric')).toEqual([
+      expect.objectContaining({
+        level: 'pending', state: 'unknown', value: null, quote: '面料还没决定', sourceTurnId: preview.turn.id,
+      }),
+    ]);
+    expect(version.requirement.turns.at(-1)).toEqual(preview.turn);
+    expect(version.candidate?.id).toBe(base.candidate?.id);
+    expect(preview.branches.find(({ option }) => option === 'defer')?.requirement).toEqual(base.requirement);
+    expect(JSON.stringify(base)).toBe(original);
+  });
+
+  it('keeps an existing exclusion while applying a separate exclusion on the same field', () => {
+    const input = { ...CONFERENCE_BRIEF, rawNarrative: `${CONFERENCE_BRIEF.rawNarrative}禁止使用羊毛。` };
+    const requirement = buildLocalDecisionRequirement(input);
+    const match = matchDecision(requirement);
+    const v1 = buildDecisionVersion({
+      projectId: 'independent-exclusions', previous: null, requirement, match, candidate: match.recommended, revision: null,
+    });
+    const firstWool = v1.requirement.constraints.find(({ field }) => field === 'fabric');
+    const preference = revise(v1, '最好用羊毛。', 'keep');
+    expect(preference.preview.requestedPatch).toEqual([
+      expect.objectContaining({ field: 'fabric', previous: firstWool, next: expect.objectContaining({ level: 'preference' }) }),
+    ]);
+    expect(preference.preview.branches.map(({ option }) => option)).toEqual(['keep', 'defer']);
+    expect(preference.branch.canConfirm).toBe(true);
+    expect(preference.version.requirement.constraints.find(({ field }) => field === 'fabric')).toEqual(firstWool);
+
+    const quantity = revise(v1, '数量改为四十八套。最好用羊毛。', 'accept');
+    expect(quantity.branch.canConfirm).toBe(true);
+    expect(quantity.branch.changes.map(({ field }) => field)).toEqual(['quantity']);
+    expect(quantity.version.requirement.constraints.find(({ field }) => field === 'fabric')).toEqual(firstWool);
+
+    const { preview, branch, version } = revise(preference.version, '必须用羊毛。也排除丝绒。', 'keep');
+    const exclusions = version.requirement.constraints.filter(({ field, op }) => field === 'fabric' && op === 'neq');
+    expect(preview.conflicts.map(({ field }) => field)).toEqual(['fabric']);
+    expect(branch.canConfirm).toBe(true);
+    expect(exclusions).toEqual([
+      firstWool,
+      expect.objectContaining({ value: 'velvet', state: 'confirmed', quote: '也排除丝绒', sourceTurnId: preview.turn.id }),
+    ]);
+    const accepted = preview.branches.find(({ option }) => option === 'accept');
+    expect(accepted?.requirement.constraints.filter(({ field }) => field === 'fabric').map(({ op, value }) => [op, value]))
+      .toEqual([['eq', 'wool'], ['neq', 'velvet']]);
+    expect(accepted?.match.status).toBe('no_match');
+    expect(accepted?.candidate).toBeNull();
+    expect(v1.requirement.constraints.filter(({ field }) => field === 'fabric')).toEqual([firstWool]);
+  });
+
   it('applies two revisions while retaining untouched hard constraints and frozen visuals', () => {
     const v1 = startConference();
     const hard = v1.requirement.constraints.filter((constraint) => constraint.level === 'hard');
@@ -166,8 +222,11 @@ describe('decision preview and version snapshots', () => {
     const withDraft = { ...history, feedbackDraft: CONFERENCE_FEEDBACK };
     const rejected = revise(v1, CONFERENCE_FEEDBACK, 'defer');
     expect(rejected.revision.humanDecision).toBe('rejected');
+    expect(appendDecisionVersion(withDraft, rejected.version)).toBe(withDraft);
     expect(withDraft.versions).toEqual([v1]);
     expect(withDraft.feedbackDraft).toBe(CONFERENCE_FEEDBACK);
+    const staleRevision = { ...first.version, revision: { ...first.revision, baseVersionId: 'older-version' } };
+    expect(appendDecisionVersion(withDraft, staleRevision)).toBe(withDraft);
     const v2 = appendDecisionVersion(withDraft, first.version);
     expect(v2.feedbackDraft).toBe('');
     expect(v2.versions).toEqual([v1, first.version]);

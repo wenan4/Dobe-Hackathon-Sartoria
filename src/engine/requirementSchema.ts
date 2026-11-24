@@ -118,7 +118,7 @@ function sourcedUnknown(item: Constraint, facts: Constraint[]): Constraint | und
   return facts.find((fact) => sameFact(fact, item) && fact.quote !== null && item.quote!.includes(fact.quote));
 }
 
-function validConstraint(item: Constraint, turns: Map<string, RequirementTurn>, facts: Constraint[]): boolean {
+function validConstraint(item: Constraint, turns: Map<string, RequirementTurn>, facts: Constraint[], initialTurnId: string): boolean {
   if (!hasText(item.id) || item.verifiedBy !== null) return false;
   if (item.state === 'unknown') {
     if (item.level !== 'pending' || item.value !== null || item.op !== 'eq' || !hasText(item.reason)) return false;
@@ -131,7 +131,8 @@ function validConstraint(item: Constraint, turns: Map<string, RequirementTurn>, 
   if (item.state !== 'explicit' || item.level === 'pending' || !hasVerbatimQuote(item, turns)) return false;
   return facts.some((fact) => sameFact(fact, item) && fact.quote !== null && item.quote!.includes(fact.quote)) || (
     facts.some((fact) => sameFact(fact, item) && fact.quote?.includes(item.quote!)) &&
-    extractRevisionConstraints({ id: item.sourceTurnId!, text: item.quote! }).some((fact) => sameFact(fact, item))
+    extractRevisionConstraints({ id: item.sourceTurnId!, text: item.quote! }, item.sourceTurnId === initialTurnId ? 'initial' : 'revision')
+      .some((fact) => sameFact(fact, item))
   );
 }
 
@@ -165,7 +166,7 @@ export function parseRequirementResponse(
     return { ok: false, issues: ['原始简报与访问记录不一致。'] };
   }
   const issues: string[] = [];
-  const facts = turns.flatMap(extractRevisionConstraints);
+  const facts = turns.flatMap((turn, index) => extractRevisionConstraints(turn, index === 0 ? 'initial' : 'revision'));
   const pendingFacts = constraints.map((item) => sourcedUnknown(item, facts));
   const normalized = constraints.map((item, index) => {
     const fact = pendingFacts[index];
@@ -175,7 +176,7 @@ export function parseRequirementResponse(
   if (!PROFESSIONAL_FIELDS.every((field) => constraints.some((item) => item.field === field))) issues.push('八项专业字段必须逐项给出。');
   if (new Set(constraints.map(({ id }) => id)).size !== constraints.length) issues.push('约束 ID 重复。');
   for (const [index, constraint] of constraints.entries()) {
-    if (!validConstraint(constraint, sourceTurns, facts)) issues.push(`${constraint.field} 的值、状态或原话无法核实。`);
+    if (!validConstraint(constraint, sourceTurns, facts, turns[0].id)) issues.push(`${constraint.field} 的值、状态或原话无法核实。`);
     const others = constraints.slice(index + 1).filter((item) => item.field === constraint.field);
     if (!blockedFields.has(constraint.field) && others.some((item) => constraintsConflict(constraint, item))) issues.push(`${constraint.field} 含互相冲突的硬约束。`);
     const unsourcedUnknown = (item: Constraint) => item.state === 'unknown' && item.sourceTurnId === null;
