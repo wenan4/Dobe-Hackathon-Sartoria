@@ -85,6 +85,14 @@ describe('requirement interview language', () => {
     ]);
   });
 
+  it('reads a question about adding a requirement as a proposal for the specified value', () => {
+    const proposal = '服装管理员问能不能把必须手洗加为一项成衣要求';
+    const text = `${proposal}。先把这条挂起。采购问能否把机洗报告纳入洗护条件。版师问能否把驳领要求撤销。`;
+    expect(observe(text)).toMatchObject([
+      { field: 'care', op: 'eq', value: 'hand_wash', level: 'preference', quote: proposal },
+    ]);
+  });
+
   it('retains pending language when approval or a specification is still outstanding', () => {
     const observations = observe('颜色还在核色卡，工艺怎么做还得等版师确认。洗护方式我得问门店。');
     expect(observations).toMatchObject([

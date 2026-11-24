@@ -25,12 +25,16 @@ const craftAliases: Partial<Record<string, string>> = {
   'crf-contrast-piping-cuff': '(?<=袖口[^，,；;。！？!?]{0,8})撞色滚边',
 };
 
-const GARMENT_COMPONENT_PAIR = '(?:上装|上衣|上身|外套|夹克)(?:和|跟|与|同|加|配|搭|及|、)(?:裙子|下裙|半身裙|长裙|下装|裤子|长裤)';
-const TWO_PIECE_COMPOSITION = [
-  `(?:分成|分为|由)${GARMENT_COMPONENT_PAIR}(?:(?:这)?(?:两|二|2|２)件)?`,
+const GARMENT_TOP = '(?:上装|上衣|上身|(?:短|长)?外套|夹克)';
+const GARMENT_BOTTOM = '(?:裙子|下裙|半身裙|长裙|连衣裙|下装|裤子|长裤)';
+const COMPONENT_JOIN = '(?:和|跟|与|同|加|配|搭|及|、)';
+const GARMENT_COMPONENT_PAIR = `(?:${GARMENT_TOP}${COMPONENT_JOIN}${GARMENT_BOTTOM}|${GARMENT_BOTTOM}${COMPONENT_JOIN}${GARMENT_TOP})`;
+const TWO_PIECE_COMPOSITION = `(?:分成|分为|由)${GARMENT_COMPONENT_PAIR}(?:(?:这)?(?:两|二|2|２)件)?`;
+const TWO_PIECE_OUTFIT = [
+  '两件式|两件套|二件式|二件套|两件装',
   `(?:${GARMENT_COMPONENT_PAIR}|上下(?:装|身|两件)?)(?:必须|需要|应当|分别|各自|做成|可以|得|要|需|都|是|为|能|\\s)*(?:(?:两|二|2|２)件(?:独立|分开的?)(?:单品)?|各自独立|独立(?:成件|制作|成衣|做)?|分穿|分开(?:穿(?:着)?|搭配|制作|做成|做为|裁剪|做|裁)?(?:各自的)?(?:(?:两|二|2|２)件)?)(?!洗|包装|清洗|寄|发货|运输)`,
+  '外套(?:搭|配|和|加|与).{0,5}(?:连衣裙|长裙)|(?:连衣裙|长裙)(?:搭|配|和|加|与).{0,5}外套',
 ].join('|');
-const TWO_PIECE_OUTFIT = `两件式|两件套|二件式|二件套|两件装|${TWO_PIECE_COMPOSITION}|外套(?:搭|配|和|加|与).{0,5}(?:连衣裙|长裙)|(?:连衣裙|长裙)(?:搭|配|和|加|与).{0,5}外套`;
 const WORKWEAR = '工作服|员工服|职业[服装]|工装';
 const ORGANIZATION = '公司|企业|单位|部门|门店|店里|柜台|前台|会务组';
 const ORGANIZATION_ROLE = '员工|同事|职工|成员|职员';
@@ -79,7 +83,7 @@ export const requirementFields = {
   ] },
   patternStructure: { label: '版型结构', choices: [
     ['h_line', 'H 型直身', '(?:直身|直筒)?[hHＨ]\\s*[型形版线]|(?:字母\\s*)?[hHＨ]\\s*(?:一样|那样)(?:的)?(?:直|笔直)|直身版型|直身结构|直筒版型|直身廓形|从(?:腋下|肩部|肩线|肩头)(?:起|开始)?(?:一直|往|向)?下(?:来)?(?:就|要|得)?(?:笔直|直直|直线|垂直)(?:往下|向下)?(?:落|垂|下)'],
-    ['two_piece', '两件式', `上下(?:分成|分为)?两件|${TWO_PIECE_OUTFIT}`],
+    ['two_piece', '两件式', `上下(?:分成|分为)?两件|${TWO_PIECE_COMPOSITION}|${TWO_PIECE_OUTFIT}`],
   ] },
   collar: { label: '领型', choices: [
     ['cross_open', '交领开襟', '交领'], ['diagonal', '斜襟', '斜襟'],
@@ -193,6 +197,8 @@ const REFERENCE_ARTIFACT = new RegExp(`${REFERENCE_IMAGE}(?:里(?:面)?|中|上(
 const ADOPTED_REFERENCE = new RegExp(`(?:按|照)(?:着)?(?:这张|那张|该)?${REFERENCE_IMAGE}(?:里(?:面)?|中|上(?:面)?)的.{1,14}(?:做|用|选|定|打版|留料)$`);
 const REPORTED_QUESTION = /问(?:了|过)?[^，,；;。！？!?]{0,8}?(?:能不能|可不可以|是否|怎么|能否)/;
 const PROPOSED_ACTION = /^(?:添[加上]|加(?:上)?|补(?:上)?|采用|选用|用|做|换成|改(?:成|为))/;
+const PROPOSED_REQUIREMENT = /^(?:把|将)\s*(.{1,32}?)\s*(?:加(?:入|进|成|为)|列(?:入|为)|纳入|写(?:入|进|成)).{0,12}(?:要求|条件|条款|标准)$/;
+const EVIDENCE_DOCUMENT = /(?:依据|证据|证明|报告|说明|证书|标签|检测|测试)(?:材料|文件)?$/;
 const CANCEL_PROPOSED_CHANGE = /(?:取消|撤销|撤回|收回|不采纳|不批准)(?:刚才|本次|这次|这项|那项|这条).{0,18}(?:改动|改稿|变更|调整|修改|提议|建议|请求)/;
 const CHANGE = /(?:改回(?:成|为)?|换回(?:成|为)?|改成|改为|换成|换为|替换为|调整为|调整成|调整到|追加至|加到|增至|增加到|减至|减到|缩减到|提高到|降到|改用|换用|改做|(?<![修更篡])改(?!良|进|善|造|版|动|编|过|写|稿)(?=\S))/;
 const ALTERNATIVE = /(?:或(?:者|是)?|二选一|择一|任选)/;
@@ -249,11 +255,13 @@ type LocatedField = Pick<FieldMatch, 'start' | 'end'> & { field: ConstraintField
 
 function catalogScopedMatches(field: ConstraintField, matches: FieldMatch[], target: string, craftMatches: FieldMatch[], collarMatches: FieldMatch[]) {
   if (field === 'craft') return matches;
+  const compositions = field === 'category' ? [...target.matchAll(new RegExp(TWO_PIECE_COMPOSITION, 'g'))] : [];
   return matches.filter((match) => {
     if (craftMatches.some(({ start, end }) => start <= match.start && end >= match.end &&
       /(?:工艺|织法|缝法|点缀|缝制).{0,8}$/.test(target.slice(0, start)))) return false;
     if (field === 'category') {
       if (collarMatches.some(({ start, end }) => start <= match.start && end >= match.end)) return false;
+      if (compositions.some((phrase) => phrase.index <= match.start && phrase.index + phrase[0].length >= match.end)) return false;
       if (match.value === 'two_piece' && (/(?:版型|结构|廓形|剪裁).{0,5}$/.test(target.slice(0, match.start)) ||
         /^(?:的)?(?:结构|构成|版型)/.test(target.slice(match.end)))) return false;
     }
@@ -334,8 +342,10 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision')
   if (!clause || protectedStatement || referenceOnly ||
     UNAPPROVED_WITHDRAWAL.test(clause) || CANCEL_PROPOSED_CHANGE.test(clause)) return [];
   const question = REPORTED_QUESTION.exec(clause);
-  const directive = question ? clause.slice(question.index + question[0].length).trimStart() : clause;
-  if (question && !PROPOSED_ACTION.test(directive)) return [];
+  const action = question ? clause.slice(question.index + question[0].length).trimStart() : clause;
+  const newRequirement = question ? PROPOSED_REQUIREMENT.exec(action)?.[1] : undefined;
+  const directive = newRequirement ?? action;
+  if (question && (EVIDENCE_DOCUMENT.test(directive) || !newRequirement && !PROPOSED_ACTION.test(action))) return [];
   const change = CHANGE.exec(directive);
   const changeLead = change ? directive.slice(0, change.index) : '';
   const proposal = Boolean(question) || PREFERENCE.test(changeLead);
@@ -390,7 +400,7 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision')
       if (WITHDRAWAL.test(statusScope)) {
         return { ...unresolved(field, clause, WITHDRAWAL_REASON), withdraws: predicateFor(field, value, NEGATION.test(prefix)) };
       }
-      const mandatory = MANDATORY.test(prefix) || MANDATORY.test(suffix);
+      const mandatory = !question && (MANDATORY.test(prefix) || MANDATORY.test(suffix));
       const boundedQuantity = field === 'quantity' && /至少|至多|不超过|不少于|超过|以上|以下|[套件身]起/.test(statusScope);
       if (AMBIGUITY.test(statusScope) || AWAITING_REVIEW.test(statusScope) || boundedQuantity) {
         return unresolved(field, clause, '原话给出的范围或取值尚不确定。', mandatory || boundedQuantity);
@@ -460,7 +470,7 @@ function standaloneGarment(item: Constraint, observations: Constraint[]): boolea
   const localFields = observations.filter((other) => other.quote === item.quote && other.value !== null);
   const localOutfit = localFields.some(({ field, op, value }) =>
     (field === 'category' || field === 'patternStructure') && op === 'eq' && value === 'two_piece');
-  if (localOutfit && new RegExp(`(?:${TWO_PIECE_COMPOSITION}|${GARMENT_COMPONENT_PAIR})`).test(item.quote)) return false;
+  if (localOutfit && new RegExp(GARMENT_COMPONENT_PAIR).test(item.quote)) return false;
   if (localFields.some(({ field }) => field === 'quantity')) return true;
   const componentDescription = /^(?:这套的|其中的?|套装的|演出服的|配套的?)?(?:外套|夹克|上衣|下装|长裙|连衣裙)(?:的)?(?=颜色|配色|袖|领|下摆|衣长|裙长|面料|洗护|采用|用|选|定|控制|换|改|做|需|应|必须|要|只|建议)/;
   if (!componentDescription.test(item.quote)) return true;

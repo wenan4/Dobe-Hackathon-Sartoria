@@ -66,6 +66,24 @@ describe('garment requirements from colloquial brief wording', () => {
     expect(result.some(({ field, value }) => (field === 'category' || field === 'patternStructure') && value === 'two_piece')).toBe(false);
   });
 
+  it.each([
+    '演出衣得分成上装和裙子两件。',
+    '演出服由短外套和连衣裙组成。',
+    '服装结构分为长裙和外套。',
+  ])('uses component breakdowns as structural evidence: %s', (text) => {
+    const result = extractRevisionConstraints({ id: 'composition', text });
+    expect(result).toMatchObject([{ field: 'patternStructure', value: 'two_piece', level: 'hard' }]);
+  });
+
+  it('keeps the stated garment category when its components follow in the same clause', () => {
+    const text = '订三套两件式演出服由外套和长裙组成。';
+    expect(extractRevisionConstraints({ id: 'outfit-category', text })).toMatchObject([
+      { field: 'quantity', value: 3 },
+      { field: 'category', value: 'two_piece' },
+      { field: 'patternStructure', value: 'two_piece' },
+    ]);
+  });
+
   it('recognizes a self order and a straight cut with modern Chinese styling', () => {
     const text = '给本人做件中式改良夹克，从肩线向下笔直垂落。去室内授奖仪式时穿。';
     const result = extractRevisionConstraints({ id: 'ceremony', text });

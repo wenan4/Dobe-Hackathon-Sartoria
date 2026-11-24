@@ -14,4 +14,10 @@ describe('punctuation and spoken clause boundaries', () => {
     expect(splitRequirementClauses(raw).map(({ text }) => text))
       .toEqual(['场馆不允许 露天舞台', '醋酸面料 也明确排除', '布面必须哑光']);
   });
+
+  it('separates consecutive postposed exclusions while keeping a spaced silhouette description intact', () => {
+    expect(splitRequirementClauses('羊毛一律不用 醋酸面料也排除 驳领是客户签字定的').map(({ text }) => text))
+      .toEqual(['羊毛一律不用', '醋酸面料也排除', '驳领是客户签字定的']);
+    expect(splitRequirementClauses('外形要像字母 H 一样直').map(({ text }) => text)).toEqual(['外形要像字母 H 一样直']);
+  });
 });

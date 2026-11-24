@@ -94,6 +94,17 @@ describe('decision preview and version snapshots', () => {
     expect(before.requirement.constraints.find((item) => item.field === 'quantity')?.value).toBe(60);
   });
 
+  it('retains a proposed addition on the defer branch without publishing a new requirement', () => {
+    const base = startConference();
+    const proposal = '工坊问能不能把专业干洗列为一项要求';
+    const { preview, revision, version } = revise(base, `${proposal}。先把这一条挂起，等样衣送回来再定。`, 'defer');
+    expect(preview.requestedPatch).toMatchObject([
+      { field: 'care', next: { op: 'eq', value: 'dry_clean', level: 'preference', quote: proposal } },
+    ]);
+    expect(revision.requestedPatch).toEqual(preview.requestedPatch);
+    expect(version.requirement).toEqual(base.requirement);
+  });
+
   it('keeps documented uncertainty and its provenance when a revision restates it', () => {
     const requirement = buildLocalDecisionRequirement({
       ...CONFERENCE_BRIEF,
