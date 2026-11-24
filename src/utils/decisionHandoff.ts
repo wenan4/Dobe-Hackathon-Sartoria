@@ -63,6 +63,8 @@ const OUTCOME_LABELS = {
 
 const ASSET_FIELD_LABELS: Readonly<Record<string, string>> = {
   candidate: '组合',
+  onlineReview: '在线拆解待核',
+  onlineQuestion: '在线建议追问',
   pattern: '版型',
   fitGuidance: '试身参考',
   drape: '垂感',
@@ -87,7 +89,7 @@ export function decisionValueLabel(constraint: Constraint | null): string {
   if (!constraint || constraint.value === null) return '待确认';
   const value = constraint.value;
   const label = constraint.field === 'quantity'
-    ? describeRequirementValue(constraint.field, value, constraint.quote)
+    ? describeRequirementValue(constraint.field, value, constraint.quote, constraint.quantityScope)
     : typeof value === 'boolean' ? (value ? '要求抗皱' : '无需抗皱')
     : VALUE_LABELS[String(value)] ?? CRAFTS.find((craft) => craft.id === value)?.shortName ?? String(value);
   return constraint.op === 'neq' ? `排除 ${label}` : label;
@@ -148,7 +150,11 @@ export function buildDecisionExport(version: Version, previous: Version | null):
     version,
     previousVersionId: version.parentVersionId,
     versionChanges: parent ? findConstraintChanges(parent.requirement.constraints, version.requirement.constraints) : [],
-    reviews: [...reviews.values()],
+    reviews: [
+      ...reviews.values(),
+      ...(version.requirement.onlineReview?.notes ?? []).map((note) => humanReview('onlineReview', note)),
+      ...(version.requirement.onlineReview?.questions ?? []).map((question) => humanReview('onlineQuestion', question)),
+    ],
     boundaries: HANDOFF_BOUNDARIES,
   });
 }
@@ -202,7 +208,8 @@ export function buildDecisionMarkdown(version: Version, previous: Version | null
     ...version.requirement.constraints.map((item) => {
       const tier = item.level === 'hard' ? '必须' : item.level === 'preference' ? '偏好' : '待核';
       const provenance = [item.sourceTurnId, item.quote && `「${item.quote}」`, item.verifiedBy].filter(Boolean).join(' · ');
-      return `- ${tier} · ${decisionFieldLabel(item.field)} · ${decisionValueLabel(item)}${provenance ? ` · ${provenance}` : ''}`;
+      const pendingDetail = item.level === 'pending' && item.quote && item.reason ? ` · ${item.reason}` : '';
+      return `- ${tier} · ${decisionFieldLabel(item.field)} · ${decisionValueLabel(item)}${provenance ? ` · ${provenance}` : ''}${pendingDetail}`;
     }),
     '',
     '## 组合与目录依据',

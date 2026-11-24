@@ -8,7 +8,11 @@ import {
 } from './requirementColorScope';
 import { unmappedGarmentTerm } from './unmappedGarment';
 import { excludesVenue, namesStageSubject, stageLocations } from './stageLocation';
-import { describeOrderQuantity, GARMENT_AFTER_CLASSIFIER, matchOrderQuantities, matchPerPersonQuantity, parseFormQuantity } from './requirementQuantity';
+import {
+  BATCH_QUANTITY_SCOPE, describeOrderQuantity, GARMENT_AFTER_CLASSIFIER, isBatchQuantity, isSampleQuantity,
+  isTentativeQuantity, matchOrderQuantities, matchPerPersonQuantity, namedQuantityScope, orderQuantityUnit, parseFormQuantity,
+  quantityScopeOf, TOTAL_QUANTITY_SCOPE,
+} from './requirementQuantity';
 import { REQUIREMENT_SCHEMA_VERSION } from '../types/decisions';
 import type { ClarificationQuestion, Constraint, ConstraintField, DecisionRequirement, RequirementTurn } from '../types/decisions';
 import type { RequirementInput } from '../types/sartoria';
@@ -192,13 +196,14 @@ export function isRequirementValue(field: ConstraintField, value: unknown): valu
     : requirementFields[field].choices.some(([choice]) => value === choice);
 }
 
-export function describeRequirementValue(field: ConstraintField, value: Constraint['value'], quote?: string | null): string {
+export function describeRequirementValue(field: ConstraintField, value: Constraint['value'], quote?: string | null,
+  quantityScope?: Constraint['quantityScope']): string {
   if (value === null) return '待确认';
-  if (field === 'quantity' && typeof value === 'number') return describeOrderQuantity(value, quote);
+  if (field === 'quantity' && typeof value === 'number') return describeOrderQuantity(value, quote, quantityScope);
   return requirementFields[field].choices.find(([choice]) => choice === value)?.[1] ?? String(value);
 }
 
-type Observation = Pick<Constraint, 'field' | 'value' | 'op' | 'level' | 'reason' | 'quote' | 'blocking' | 'withdraws'> & {
+type Observation = Pick<Constraint, 'field' | 'value' | 'op' | 'level' | 'reason' | 'quote' | 'blocking' | 'withdraws' | 'quantityScope'> & {
   resolvesPending?: true;
 };
 type ReferenceExclusion = { observation: Observation; supersedes?: { clauseIndex: number; value: Observation['value'] } };
@@ -288,9 +293,30 @@ const REFERENCE_REASON = '原话只将该项列为参考或备选，取值尚未
 const UNSETTLED_REASON = '原话给出的范围或取值尚不确定。';
 const PENDING_COLOR_REASON = '原话中的颜色仍需确认，尚未定色。';
 const UNMAPPED_COLOR_PREFERENCE = '原话表述的色彩偏好需要人工复核。';
+const ALLOCATION_SPLIT = /(?:男女(?:款|装|版)?|各(?:款|类|组|岗|岗位|班次|尺码))(?:各(?:自)?|分别)?(?:要|做|订|定|留|分|配){0,2}(?:多少|几(?:套|件|身|条)|数量|套数|件数)/;
+
+export function isPendingQuantityBreakdown(item: Constraint): boolean {
+  return item.field === 'quantity' && item.level === 'pending' && ALLOCATION_SPLIT.test(item.quote ?? '');
+}
+
+export function isIndependentQuantityReview(pending: Constraint, edited: Constraint): boolean {
+  if (pending.field !== 'quantity' || edited.field !== 'quantity' || pending.level !== 'pending' || pending.blocking) return false;
+  if (isPendingQuantityBreakdown(edited)) return !isPendingQuantityBreakdown(pending);
+  if (isPendingQuantityBreakdown(pending)) return true;
+  const scope = pending.quantityScope ?? namedQuantityScope(pending.quote ?? '');
+  return Boolean(scope && scope !== quantityScopeOf(edited));
+}
 
 export function isExplicitWithdrawal(constraint: Constraint): boolean {
   return constraint.state === 'unknown' && constraint.reason === WITHDRAWAL_REASON && constraint.quote !== null;
+}
+
+export function targetsWithdrawal(withdrawal: Constraint, existing: Constraint): boolean {
+  if (withdrawal.field !== existing.field || existing.value === null) return false;
+  const scope = withdrawal.field === 'quantity' ? withdrawal.quantityScope ?? namedQuantityScope(withdrawal.quote ?? '') : undefined;
+  if (scope && scope !== quantityScopeOf(existing)) return false;
+  const target = withdrawal.withdraws;
+  return !target || target.op === existing.op && target.value === existing.value;
 }
 
 function predicateFor(field: ConstraintField, value: FieldMatch['value'], excluded: boolean): NonNullable<Constraint['withdraws']> {
@@ -484,6 +510,10 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
   const observations: Observation[] = [];
   for (const { field, matches, mention, unmapped } of fields) {
     if (referenceOnly && field !== 'color') continue;
+    if (field === 'quantity' && !matches.length && ALLOCATION_SPLIT.test(target)) {
+      observations.push(unresolved(field, clause, '各款或各组的分配数量仍需确认。'));
+      continue;
+    }
     if (field === 'craft') {
       observations.push(...replacedCrafts.map(({ value, start }) => ({
         ...unresolved(field, clause, WITHDRAWAL_REASON),
@@ -541,8 +571,18 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
       const openQuestion = OPEN_QUESTION.test(statusScope);
       const mandatory = !proposal && !proposedApproval && !openQuestion && (confirmed || MANDATORY.test(prefix) || MANDATORY.test(suffix));
       const boundedQuantity = field === 'quantity' && /至少|至多|不超过|不少于|超过|以上|以下|[套件身]起/.test(statusScope);
-      if ((confirmationPending || isUnsettled(statusScope)) && !confirmed || boundedQuantity) {
-        return unresolved(field, clause, UNSETTLED_REASON, mandatory || boundedQuantity);
+      const amountStart = clause.length - target.length + start;
+      const amountEnd = clause.length - target.length + end;
+      const quantityScope = field === 'quantity' ? (isBatchQuantity(clause, amountStart, amountEnd) ? 'batch' : 'order') : undefined;
+      if (field === 'quantity' && isSampleQuantity(clause, amountStart, amountEnd)) {
+        return unresolved(field, clause, '原话记录了样衣安排，正式成衣订量待确认。');
+      }
+      if ((confirmationPending || isUnsettled(statusScope) ||
+        field === 'quantity' && isTentativeQuantity(clause, amountStart, amountEnd)) && !confirmed || boundedQuantity) {
+        return {
+          ...unresolved(field, clause, UNSETTLED_REASON, mandatory || boundedQuantity),
+          ...(quantityScope ? { quantityScope } : {}),
+        };
       }
       const explicitComposition = field === 'fabric' && /\d[\d.]*\s*(?:%|％)|百分之[零一二两三四五六七八九十百\d]+|[一二两三四五六七八九]成/.test(statusScope);
       const measuredFit = (field === 'easeAllowance' || field === 'lengthRatio') && /(?:\d|[一二两三四五六七八九十])\s*(?:公分|厘米|毫米|cm\b|mm\b)/i.test(statusScope);
@@ -568,6 +608,7 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
         ? 'preference' : 'hard';
       const explicitColorChoice = field === 'color' && (directColorChoice || CHOOSE_COLOR.test(prefix));
       return { field, ...predicateFor(field, value, excluded), level, reason: null, quote: clause,
+        ...(quantityScope ? { quantityScope } : {}),
         ...((confirmed || explicitColorChoice) && level === 'hard' && !excluded ? { resolvesPending: true } : {}),
       };
     });
@@ -695,9 +736,25 @@ function withAdjacentColorReference(text: string, clauses: RequirementClause[], 
   return blocker;
 }
 
-type ConstraintPredicate = Pick<Constraint, 'field' | 'op' | 'value'>;
+type ConstraintPredicate = Pick<Constraint, 'field' | 'op' | 'value'> & Partial<Pick<Constraint, 'quote' | 'quantityScope'>>;
+
+export function sameQuantityScope(left: ConstraintPredicate, right: ConstraintPredicate): boolean {
+  if (left.field !== 'quantity' || right.field !== 'quantity' ||
+      typeof left.value !== 'number' || typeof right.value !== 'number') return true;
+  return quantityScopeOf(left) === quantityScopeOf(right);
+}
 
 export function constraintPredicatesConflict(left: ConstraintPredicate, right: ConstraintPredicate): boolean {
+  if (!sameQuantityScope(left, right)) {
+    if (left.op !== 'eq' || right.op !== 'eq' || typeof left.value !== 'number' || typeof right.value !== 'number') return false;
+    const leftIsBatch = quantityScopeOf(left) === 'batch';
+    const batchValue = leftIsBatch ? left.value : right.value;
+    const totalValue = leftIsBatch ? right.value : left.value;
+    if (batchValue <= totalValue) return false;
+    const batchUnit = orderQuantityUnit(batchValue, (leftIsBatch ? left.quote : right.quote) ?? '', 'batch');
+    const totalUnit = orderQuantityUnit(totalValue, (leftIsBatch ? right.quote : left.quote) ?? '', 'order');
+    return Boolean(batchUnit && batchUnit === totalUnit);
+  }
   if (left.field === 'scene' && right.field === 'scene' && left.value !== null && right.value !== null) {
     const named = [left, right].find((item) => SCENES.some(({ id }) => id === item.value));
     if (named) {
@@ -715,6 +772,32 @@ export function constraintPredicatesConflict(left: ConstraintPredicate, right: C
 
 export function constraintsConflict(left: Constraint, right: Constraint): boolean {
   return left.level === 'hard' && right.level === 'hard' && constraintPredicatesConflict(left, right);
+}
+
+export function hasQuantityScopeConflict(constraints: Constraint[]): boolean {
+  const amounts = constraints.filter((item) => item.field === 'quantity' && item.level === 'hard' && item.op === 'eq');
+  return amounts.some((left, index) => amounts.slice(index + 1).some((right) =>
+    !sameQuantityScope(left, right) && constraintsConflict(left, right)));
+}
+
+export function applyConstraintEdit(constraints: Constraint[], item: Constraint): Constraint[] {
+  const edited = constraints.flatMap((constraint) => {
+    if (constraint.id === item.id) return [item];
+    if (constraint.field !== item.field) return [constraint];
+    if (!sameQuantityScope(constraint, item) ||
+      isIndependentQuantityReview(constraint, item) || isIndependentQuantityReview(item, constraint)) return [constraint];
+    if (constraint.state === 'unknown' || item.state === 'unknown' ||
+      constraintPredicatesConflict(constraint, item) || constraint.value === item.value) return [];
+    return [constraint];
+  });
+  if (item.field === 'quantity' && hasQuantityScopeConflict(edited)) {
+    edited.push({
+      id: 'edit:quantity:scope-conflict', field: 'quantity', op: 'eq', value: null, state: 'unknown',
+      level: 'pending', sourceTurnId: null, quote: null, verifiedBy: null, blocking: true,
+      reason: '本批订量超过同单位的整单数量，请核对两项数值。',
+    });
+  }
+  return edited;
 }
 
 function standaloneGarment(item: Constraint, observations: Constraint[]): boolean {
@@ -753,6 +836,13 @@ export function extractRevisionConstraints(turn: RequirementTurn, mode: 'initial
       (item.reason !== REFERENCE_REASON || !references[index + 1]?.some(({ observation }) => observation.field === item.field)) &&
       !(item.level === 'preference' && item.op === 'eq' && supersededPreferences.some(({ observation, supersedes }) =>
         observation.field === item.field && supersedes?.clauseIndex === index && supersedes.value === item.value)));
+    const organizationEvidence = mode === 'initial' && found.find(({ field, value }) => field === 'businessType' && value === 'corporate_uniform');
+    if (organizationEvidence && organizationEvidence.quote === clause.text) {
+      const buyerRoles = clauses.slice(index + 1, index + 3);
+      if (buyerRoles.length === 2 && buyerRoles.every(({ text }) => /^(?:采购|店长|门店负责人|后勤|行政|主管)[^，,；;。！？!?]{0,6}(?:备注|写|要求|规定|确认|提出)/u.test(text))) {
+        organizationEvidence.quote = turn.text.slice(clause.start, buyerRoles[1].end);
+      }
+    }
     const tentativeColor = found.find(({ field, reason }) => field === 'color' && reason === PENDING_COLOR_REASON);
     if (tentativeColor && next && /^[，,；; \t]+$/u.test(turn.text.slice(clause.end, next.start)) &&
       fieldMentions.color?.test(next.text) && isUnsettled(next.text) && !namesColor(next.text)) {
@@ -800,21 +890,22 @@ export function extractRevisionConstraints(turn: RequirementTurn, mode: 'initial
     if (field === 'quantity' && items.some(({ op, quote }) => op === 'eq' && /^(?:而)?是/.test(quote ?? ''))) {
       items = items.filter(({ op, quote }) => op !== 'neq' || !/(?:不是|并非)(?:要|订|做)?/.test(quote ?? ''));
     }
-    const withdrawalIndex = items.findLastIndex((item) => isExplicitWithdrawal(item) && !item.withdraws);
+    const isScopedWithdrawal = (item: Constraint) => field === 'quantity' && Boolean(namedQuantityScope(item.quote ?? ''));
+    const withdrawalIndex = items.findLastIndex((item) => isExplicitWithdrawal(item) && !item.withdraws && !isScopedWithdrawal(item));
     if (withdrawalIndex >= 0) {
       const after = items.slice(withdrawalIndex + 1);
       if (!after.some(({ value }) => value !== null)) return [items[withdrawalIndex]];
       items = after;
     }
-    const withdrawals = items.filter((item, index) => item.withdraws && !items.slice(index + 1).some((next) =>
-      next.op === item.withdraws!.op && next.value === item.withdraws!.value ||
-      next.withdraws?.op === item.withdraws!.op && next.withdraws.value === item.withdraws!.value));
+    const withdrawals = items.filter((item, index) => isExplicitWithdrawal(item) && (item.withdraws || isScopedWithdrawal(item)) &&
+      !items.slice(index + 1).some((next) => targetsWithdrawal(item, next) ||
+        item.withdraws && next.withdraws?.op === item.withdraws.op && next.withdraws.value === item.withdraws.value));
     const concrete = items.filter((item, index) => item.value !== null && !items.slice(index + 1).some((next) =>
-      next.withdraws?.op === item.op && next.withdraws.value === item.value));
+      isExplicitWithdrawal(next) && targetsWithdrawal(next, item)));
     const conflicts = concrete.some((left, index) => concrete.slice(index + 1).some((right) => constraintsConflict(left, right)));
     if (conflicts) return [...withdrawals, ...concrete.filter(({ level }) => level === 'hard'), {
       ...items[0], id: `${turn.id}:${field}:conflict`, value: null, op: 'eq', level: 'pending', state: 'unknown',
-      quote: turn.text.trim(), reason: '同一轮原话包含互相冲突的要求，需要人工确认。', blocking: true,
+      quote: turn.text.trim(), reason: '同一轮原话包含互相冲突的要求，需要人工确认。', blocking: true, quantityScope: undefined,
     } satisfies Constraint];
     const hasChosenValue = concrete.some((item) => item.op === 'eq');
     const open = items.filter((item) => item.state === 'unknown' && !isExplicitWithdrawal(item) &&
@@ -835,9 +926,9 @@ export function extractRevisionConstraints(turn: RequirementTurn, mode: 'initial
       }
     }
     const distinct = concrete.filter((item, index) => !concrete.slice(index + 1).some((other) =>
-      other.op === item.op && other.value === item.value && (other.level === item.level || other.level === 'hard')))
+      other.op === item.op && other.value === item.value && sameQuantityScope(item, other) && (other.level === item.level || other.level === 'hard')))
       .filter((item) => item.level === 'hard' || !concrete.some((other) =>
-        other.op === item.op && other.value === item.value && other.level === 'hard'));
+        other.op === item.op && other.value === item.value && sameQuantityScope(item, other) && other.level === 'hard'));
     return [...withdrawals, ...distinct, ...(pending ? [pending] : [])];
   });
 }
@@ -871,13 +962,21 @@ export function buildClarificationQuestions(constraints: Constraint[]): Clarific
   for (const field of priorities) {
     if (!constraints.some((item) => item.field === field && (item.state === 'explicit' || item.state === 'confirmed' || isExplicitWithdrawal(item)))) fields.add(field);
   }
-  return [...fields].slice(0, 2).map((field) => ({ field, question: questions[field] ?? `请确认${requirementFields[field].label}的具体要求。` }));
+  return [...fields].slice(0, 2).map((field) => {
+    const quote = field === 'quantity' ? outstanding.find((item) => item.field === field)?.quote ?? '' : '';
+    const quantityQuestion = ALLOCATION_SPLIT.test(quote) ? '各款或各组分别需要多少成衣？请注明单位。'
+      : TOTAL_QUANTITY_SCOPE.test(quote) ? '整单累计需要多少成衣？请注明单位。'
+        : BATCH_QUANTITY_SCOPE.test(quote) ? '本批需要多少成衣？请注明单位。' : undefined;
+    return { field, question: quantityQuestion ?? questions[field] ?? `请确认${requirementFields[field].label}的具体要求。` };
+  });
 }
 
 function formAndPresetSuggestions(input: RequirementInput): Partial<Record<ConstraintField, NonNullable<Constraint['value']>>> {
   const formQuantity = parseFormQuantity(input.groupSize);
   return {
-    businessType: input.businessType, season: input.season, scene: sceneContext[input.targetSceneId],
+    businessType: input.businessType,
+    season: input.presetDemoId || input.season !== 'all_season' ? input.season : undefined,
+    scene: sceneContext[input.targetSceneId],
     quantity: input.presetDemoId && formQuantity ? formQuantity : undefined,
     ...(input.presetDemoId === 'official-case-6' ? officialSixSuggestions : {}),
   };

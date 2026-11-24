@@ -15,13 +15,16 @@ import { evaluateFeasibility } from './matchingEngine';
 import { generateVisualPromptPack } from './promptEngine';
 import { generateProposalDraft } from './proposalEngine';
 import { describeRequirementValue, requirementFields } from './requirementInterview';
+import { quantityScopeOf } from './requirementQuantity';
 
 function statement(requirement: DecisionRequirement, field: ConstraintField): Constraint | undefined {
   if (requirement.constraints.some((constraint) => constraint.field === field && constraint.blocking)) return undefined;
   const known = requirement.constraints.filter((constraint) => constraint.field === field &&
     constraint.op === 'eq' && constraint.value !== null && constraint.level !== 'pending');
-  return known.find((constraint) => constraint.state === 'confirmed') ??
-    known.find((constraint) => constraint.state === 'explicit') ?? known[0];
+  const order = field === 'quantity' ? known.filter((item) => quantityScopeOf(item) === 'order' && item.state !== 'suggested') : [];
+  const options = order.length ? order : known;
+  return options.find((constraint) => constraint.state === 'confirmed') ??
+    options.find((constraint) => constraint.state === 'explicit') ?? options[0];
 }
 
 export function decisionInput(requirement: DecisionRequirement, candidate?: CandidateCombination | null): RequirementInput {
@@ -33,7 +36,7 @@ export function decisionInput(requirement: DecisionRequirement, candidate?: Cand
     ...input,
     businessType: business === 'corporate_uniform' || business === 'private_couture' ? business : input.businessType,
     groupSize: quantity ? describeRequirementValue('quantity', quantity.value,
-      quantity.quote ?? (quantity.state === 'suggested' ? input.groupSize : null)) : input.groupSize,
+      quantity.quote ?? (quantity.state === 'suggested' ? input.groupSize : null), quantity.quantityScope) : input.groupSize,
     season: season === 'spring' || season === 'summer' || season === 'autumn' || season === 'winter' || season === 'all_season'
       ? season : input.season,
     targetSceneId: candidate?.config.sceneId ?? input.targetSceneId,
@@ -71,6 +74,8 @@ export function decisionPresentation(
     };
   });
   const originalBuckets = presentation.threeBuckets;
+  const onlineReview = requirement.onlineReview;
+  const reviewNotes = presentation.engineUsed === 'llm_api' ? [] : originalBuckets.needsHumanVerification;
   const sourcedConstraints = requirement.constraints.filter(({ state }) => state === 'confirmed' || state === 'explicit');
   return {
     ...presentation,
@@ -81,9 +86,11 @@ export function decisionPresentation(
       : dimension),
     threeBuckets: {
       ...originalBuckets,
-      userExplicit: sourcedConstraints.map(({ field, op, value, level, quote }) =>
-        `${requirementFields[field].label}：${op === 'neq' ? '排除 ' : ''}${describeRequirementValue(field, value, quote)}${level === 'preference' ? '（偏好）' : ''}`),
+      userExplicit: sourcedConstraints.map(({ field, op, value, level, quote, quantityScope }) =>
+        `${requirementFields[field].label}：${op === 'neq' ? '排除 ' : ''}${describeRequirementValue(field, value, quote, quantityScope)}${level === 'preference' ? '（偏好）' : ''}`),
+      needsHumanVerification: [...new Set([...reviewNotes, ...(onlineReview?.notes ?? [])])],
     },
+    followUpQuestions: onlineReview?.questions ?? (presentation.engineUsed === 'llm_api' ? [] : presentation.followUpQuestions),
   };
 }
 

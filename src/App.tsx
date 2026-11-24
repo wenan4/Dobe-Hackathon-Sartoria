@@ -15,6 +15,7 @@ import { PATTERNS } from './data/patterns';
 import { PRESET_DEMO_CASES } from './data/presetDemos';
 import { SCENES } from './data/scenes';
 import { deconstructRequirement, fetchWorkerLlmStatus } from './engine/deconstructEngine';
+import { applyOnlineRequirementReview } from './engine/onlineRequirementReview';
 import { evaluateDecisionConfiguration, matchDecision } from './engine/decisionMatching';
 import {
   appendDecisionVersion,
@@ -185,7 +186,7 @@ export default function App() {
   const runLocalInterview = useCallback((
     nextInput: RequirementInput, previous?: DecisionRequirement, presentation?: DeconstructedRequirement,
   ) => {
-    const result = refreshDecisionRequirement(nextInput, previous);
+    const result = applyOnlineRequirementReview(refreshDecisionRequirement(nextInput, previous), presentation);
     const candidate = matchDecision(result).recommended;
     setRequirement(result);
     setDeconstructed(decisionPresentation(result, presentation));
@@ -432,7 +433,7 @@ export default function App() {
   };
 
   const handleEditConstraints = (constraints: Constraint[]) => {
-    const next = { ...requirement, constraints, questions: buildClarificationQuestions(constraints) };
+    const next = applyOnlineRequirementReview({ ...requirement, constraints, questions: buildClarificationQuestions(constraints) });
     const candidate = matchDecision(next).recommended;
     setRequirement(next);
     setDeconstructed(

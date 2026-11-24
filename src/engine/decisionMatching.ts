@@ -13,6 +13,7 @@ import type {
   MatchResult,
 } from '../types/decisions';
 import type { ConfigurationState } from '../types/sartoria';
+import { sameQuantityScope } from './requirementInterview';
 import { describeOrderQuantity } from './requirementQuantity';
 
 type PatternRecord = (typeof DECISION_CATALOG.patterns)[number];
@@ -94,7 +95,7 @@ function checkConstraint(
 ): AssetEvidence {
   const outcome = constraintOutcome(constraint, actual, equals);
   const requestedValue = constraint.field === 'quantity' && typeof constraint.value === 'number'
-    ? describeOrderQuantity(constraint.value, constraint.quote) : describeValue(constraint.value);
+    ? describeOrderQuantity(constraint.value, constraint.quote, constraint.quantityScope) : describeValue(constraint.value);
   const requested = `${constraint.op === 'neq' ? '排除 ' : ''}${requestedValue}`;
   const label = `${asset.code} · ${fieldLabels[constraint.field]}`;
   const intent = constraint.level === 'preference' ? '偏好' : '要求';
@@ -203,16 +204,17 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
     }
   }
 
-  const statedOrder = requirement.constraints.find((item) => item.field === 'quantity' &&
+  const statedQuantities = requirement.constraints.filter((item) => item.field === 'quantity' &&
     item.op === 'eq' && item.level === 'hard' && typeof item.value === 'number');
   const quantityChecks = (constraint: Constraint) => [
     { record: pattern, asset: patternAsset }, { record: fabric, asset: fabricAsset },
   ].map(({ record, asset }) => {
     const range = record?.profile.quantity;
     const value = range ? `${range[0]}–${range[1]}` : null;
-    if (constraint.op === 'neq' && typeof statedOrder?.value === 'number') {
-      return checkConstraint(teamEvidence(asset), constraint, statedOrder.value,
-        statedOrder.value === constraint.value, `已确认的订单数量 ${describeOrderQuantity(statedOrder.value, statedOrder.quote)}`);
+    const stated = constraint.op === 'neq' ? statedQuantities.find((item) => sameQuantityScope(item, constraint)) : undefined;
+    if (typeof stated?.value === 'number') {
+      return checkConstraint(teamEvidence(asset), constraint, stated.value,
+        stated.value === constraint.value, `已确认的数量 ${describeOrderQuantity(stated.value, stated.quote, stated.quantityScope)}`);
     }
     const within = range && typeof constraint.value === 'number'
       && range[0] <= constraint.value && constraint.value <= range[1];

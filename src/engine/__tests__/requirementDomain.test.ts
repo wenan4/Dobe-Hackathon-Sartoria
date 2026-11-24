@@ -4,6 +4,21 @@ import { decisionInput, decisionPresentation } from '../decisionVersion';
 import { buildLocalDecisionRequirement, extractRevisionConstraints } from '../requirementInterview';
 
 describe('garment requirements from colloquial brief wording', () => {
+  it('keeps an unstated season open when the form has its generic default', () => {
+    const input = {
+      rawNarrative: '我想订一件对襟外套。', projectName: '', clientName: '', groupSize: '',
+      targetSceneId: '', season: 'all_season' as const, businessType: 'private_couture' as const,
+    };
+    const season = (form: typeof input & { presetDemoId?: string }) =>
+      buildLocalDecisionRequirement(form).constraints.find(({ field }) => field === 'season');
+    expect(season(input)).toMatchObject({ value: null, state: 'unknown', level: 'pending' });
+    expect(season({ ...input, rawNarrative: '订一件对襟外套，全年穿。' })).toMatchObject({
+      value: 'all_season', state: 'explicit', level: 'hard',
+    });
+    expect(season({ ...input, presetDemoId: 'official-case-6' })).toMatchObject({
+      value: 'all_season', state: 'suggested', level: 'preference',
+    });
+  });
   it('computes a total from a named roster and each wearer’s allocation across adjacent clauses', () => {
     const text = '前台换西服。名单有十七名职员，人均领两身西装。';
     expect(extractRevisionConstraints({ id: 'uniforms', text })).toMatchObject([
@@ -93,7 +108,7 @@ describe('garment requirements from colloquial brief wording', () => {
 
   it.each([
     ['订四件两件式演出服。', 4, '4 件'],
-    ['这批要做六条长裙。', 6, '6 条'],
+    ['这批要做六条长裙。', 6, '本批 6 条'],
     ['想订一件装饰简洁的外套。', 1, '1 件'],
     ['名单有九名店员，每人领两身西服。', 18, '18 身'],
     ['成衣件数为二十二。', 22, '22 件'],

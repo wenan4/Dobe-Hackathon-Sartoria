@@ -14,9 +14,12 @@ import type {
 } from '../types/decisions';
 import type { RequirementInput } from '../types/sartoria';
 import { evaluateDecisionConfiguration, matchDecision } from './decisionMatching';
+import { applyOnlineRequirementReview } from './onlineRequirementReview';
+import { quantityScopeOf, TOTAL_QUANTITY_SCOPE } from './requirementQuantity';
 import {
   buildClarificationQuestions, buildLocalDecisionRequirement, constraintPredicatesConflict as conflictsWith,
-  constraintsConflict, extractRevisionConstraints, isExplicitWithdrawal,
+  constraintsConflict, extractRevisionConstraints, hasQuantityScopeConflict, isExplicitWithdrawal,
+  isIndependentQuantityReview, sameQuantityScope, targetsWithdrawal,
 } from './requirementInterview';
 
 export interface RevisionConflict {
@@ -64,6 +67,7 @@ export function findConstraintChanges(previous: Constraint[], next: Constraint[]
 
 function sameMeaning(a: Constraint, b: Constraint): boolean {
   return a.field === b.field && a.op === b.op && a.value === b.value && a.level === b.level && a.state === b.state &&
+    sameQuantityScope(a, b) &&
     Boolean(a.blocking) === Boolean(b.blocking) &&
     (a.value !== null || (hasRecordedSource(a) === hasRecordedSource(b) &&
       isExplicitWithdrawal(a) === isExplicitWithdrawal(b) &&
@@ -76,12 +80,6 @@ function hasRecordedSource(constraint: Constraint): boolean {
 
 function isNonblockingUnknown(constraint: Constraint): boolean {
   return constraint.value === null && !constraint.blocking && !isExplicitWithdrawal(constraint);
-}
-
-function targetsWithdrawal(withdrawal: Constraint, existing: Constraint): boolean {
-  const target = withdrawal.withdraws;
-  return withdrawal.field === existing.field && existing.value !== null &&
-    (!target || target.op === existing.op && target.value === existing.value);
 }
 
 export function refreshDecisionRequirement(input: RequirementInput, previous?: DecisionRequirement): DecisionRequirement {
@@ -98,7 +96,7 @@ export function refreshDecisionRequirement(input: RequirementInput, previous?: D
     if (!refresh.size) return { ...previous, input };
     const constraints = [...previous.constraints.filter((item) => !refresh.has(item.field)),
       ...fresh.constraints.filter((item) => refresh.has(item.field))];
-    return { ...fresh, turns: previous.turns, constraints, questions: buildClarificationQuestions(constraints) };
+    return { ...fresh, turns: previous.turns, constraints, questions: buildClarificationQuestions(constraints), onlineReview: previous.onlineReview };
   }
   const confirmed = previous.constraints.filter((item) => item.state === 'confirmed');
   if (!confirmed.length) return fresh;
@@ -106,8 +104,9 @@ export function refreshDecisionRequirement(input: RequirementInput, previous?: D
   const constraints = [...confirmed];
   for (const item of fresh.constraints) {
     const manual = confirmed.filter((prior) => prior.field === item.field);
-    if (manual.length && (item.state === 'suggested' || item.value === null && !item.blocking ||
-        manual.some((prior) => prior.op === item.op && prior.value === item.value))) continue;
+    if (manual.length && (item.state === 'suggested' || item.value === null && !item.blocking &&
+        !manual.some((prior) => isIndependentQuantityReview(item, prior)) ||
+        manual.some((prior) => prior.op === item.op && prior.value === item.value && sameQuantityScope(prior, item)))) continue;
     const next = item.sourceTurnId ? { ...item, id: `${turn.id}:${item.id}`, sourceTurnId: turn.id } : item;
     constraints.push(next);
     if (manual.some((prior) => conflictsWith(prior, next))) {
@@ -126,6 +125,7 @@ function applyPatch(constraints: Constraint[], requested: Constraint[], verified
       const retained = current.filter((item) => {
         if (targetsWithdrawal(next, item)) return false;
         if (item.field !== next.field || item.value !== null) return true;
+        if (isIndependentQuantityReview(item, next)) return true;
         return Boolean(next.withdraws && !item.blocking && hasRecordedSource(item));
       });
       return [...retained, next];
@@ -134,11 +134,13 @@ function applyPatch(constraints: Constraint[], requested: Constraint[], verified
       return current;
     }
     const unchanged = current.some((item) => item.state !== 'suggested' && item.field === next.field && item.op === next.op &&
-      item.value === next.value && (item.level === next.level || item.level === 'hard'));
+      item.value === next.value && sameQuantityScope(item, next) && (item.level === next.level || item.level === 'hard'));
     if (unchanged) return current;
     const retained = current.filter((item) => {
       if (item.field !== next.field) return true;
-      if (item.value === null) return next.level === 'preference' && (item.blocking || hasRecordedSource(item));
+      if (item.value === null) return isIndependentQuantityReview(item, next) ||
+        next.level === 'preference' && (item.blocking || hasRecordedSource(item));
+      if (!sameQuantityScope(item, next)) return true;
       return !conflictsWith(item, next) && (item.op !== next.op || item.value !== next.value);
     });
     return [...retained, { ...next, state: 'confirmed' as const, verifiedBy }];
@@ -146,11 +148,13 @@ function applyPatch(constraints: Constraint[], requested: Constraint[], verified
 }
 
 function recordPendingObservations(constraints: Constraint[], observations: Constraint[], accepted: Constraint[]): Constraint[] {
-  const pending = observations.filter((next) => !accepted.some((item) => item.field === next.field && item.level === 'hard') &&
-    !constraints.some((item) => item.field === next.field && isNonblockingUnknown(item) && hasRecordedSource(item)));
+  const pending = observations.filter((next) => !accepted.some((item) => item.field === next.field && item.level === 'hard' &&
+    !isIndependentQuantityReview(next, item)) && !constraints.some((item) => item.field === next.field &&
+      isNonblockingUnknown(item) && hasRecordedSource(item) && !isIndependentQuantityReview(item, next) &&
+      !isIndependentQuantityReview(next, item)));
   if (!pending.length) return constraints;
-  const fields = new Set(pending.map(({ field }) => field));
-  return [...constraints.filter((item) => !fields.has(item.field) || !isNonblockingUnknown(item)), ...pending];
+  return [...constraints.filter((item) => !isNonblockingUnknown(item) || !pending.some((next) =>
+    next.field === item.field && !isIndependentQuantityReview(item, next) && !isIndependentQuantityReview(next, item))), ...pending];
 }
 
 function previewImpacts(base: CandidateCombination | null, next: CandidateCombination | null, changes: ConstraintChange[]): RevisionImpact[] {
@@ -196,17 +200,23 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
   const id = `${base.id}:rev-${crypto.randomUUID()}`;
   const turn: RequirementTurn = { id, text: draft };
   const constraints = base.requirement.constraints;
-  const observations = extractRevisionConstraints(turn);
+  const existingQuantities = constraints.filter((item) => item.field === 'quantity' && item.op === 'eq' && typeof item.value === 'number');
+  const batchOnly = existingQuantities.length > 0 && existingQuantities.every((item) => quantityScopeOf(item) === 'batch');
+  const observations = extractRevisionConstraints(turn).map((item): Constraint =>
+    batchOnly && item.field === 'quantity' && item.quantityScope === 'order' && !TOTAL_QUANTITY_SCOPE.test(item.quote ?? '')
+      ? { ...item, quantityScope: 'batch' }
+      : item);
   // An open choice can be documented in the next version without proposing a change to the contract.
   const pending = observations.filter(isNonblockingUnknown);
   const requested = observations.filter((next) => !isNonblockingUnknown(next) &&
     (next.value === null || !constraints.some((item) => item.field === next.field && item.op === next.op &&
-      item.value === next.value && (item.state === 'confirmed' || item.state === 'explicit') &&
+      item.value === next.value && sameQuantityScope(item, next) && (item.state === 'confirmed' || item.state === 'explicit') &&
       (item.level === next.level || item.level === 'hard'))));
   const requestedPatch = requested.map((next) => {
     const previous = isExplicitWithdrawal(next)
       ? constraints.find((item) => targetsWithdrawal(next, item))
-      : constraints.find((item) => item.field === next.field && (conflictsWith(item, next) || item.op === next.op && item.value === next.value)) ??
+      : constraints.find((item) => item.field === next.field && sameQuantityScope(item, next) &&
+        (conflictsWith(item, next) || item.op === next.op && item.value === next.value)) ??
         constraints.find((item) => item.field === next.field && item.value === null);
     return { field: next.field, previous: previous ?? null, next };
   });
@@ -220,7 +230,7 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     }
     const withdrawal = isExplicitWithdrawal(next);
     const existing = constraints.find((item) => item.level === 'hard' &&
-      (withdrawal ? targetsWithdrawal(next, item) : conflictsWith(item, next)));
+      (withdrawal ? targetsWithdrawal(next, item) : sameQuantityScope(item, next) && conflictsWith(item, next)));
     if (existing) {
       blocked.add(next.id);
       if (!withdrawal) conflicts.push({ field: next.field,
@@ -228,18 +238,22 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     }
     if (requested.some((item) => constraintsConflict(item, next))) contradictory.add(next.field);
   }
+  const quantityRequests = requested.filter((item) => item.field === 'quantity' && (item.level === 'hard' || isExplicitWithdrawal(item)));
+  if (quantityRequests.length && hasQuantityScopeConflict(applyPatch(constraints, quantityRequests, '定制业务专员'))) {
+    contradictory.add('quantity');
+  }
   for (const field of contradictory) conflicts.push({ field, detail: '反馈中的条件存在冲突或表述不确定，请先澄清。' });
 
   const buildBranch = (option: RevisionOption, accepted: Constraint[]): RevisionBranch => {
     const next = option === 'defer' ? constraints
       : recordPendingObservations(applyPatch(constraints, accepted, '定制业务专员'), pending, accepted);
     const changes = findConstraintChanges(constraints, next);
-    const requirement = option === 'defer' ? base.requirement : {
+    const requirement = option === 'defer' ? base.requirement : applyOnlineRequirementReview({
       ...base.requirement,
       turns: [...base.requirement.turns, turn],
       constraints: next,
       questions: buildClarificationQuestions(next),
-    };
+    });
     const match = changes.length > 0 ? matchDecision(requirement) : base.match;
     const candidate = chooseCandidate(base, requirement, match, changes);
     const recordsRetention = option === 'keep' && blocked.size > 0 && changes.length === 0;
