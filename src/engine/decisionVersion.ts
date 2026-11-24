@@ -27,12 +27,13 @@ function statement(requirement: DecisionRequirement, field: ConstraintField): Co
 export function decisionInput(requirement: DecisionRequirement, candidate?: CandidateCombination | null): RequirementInput {
   const { input } = requirement;
   const business = statement(requirement, 'businessType')?.value;
-  const quantity = statement(requirement, 'quantity')?.value;
+  const quantity = statement(requirement, 'quantity');
   const season = statement(requirement, 'season')?.value;
   return {
     ...input,
     businessType: business === 'corporate_uniform' || business === 'private_couture' ? business : input.businessType,
-    groupSize: typeof quantity === 'number' ? `${quantity} 套` : input.groupSize,
+    groupSize: quantity ? describeRequirementValue('quantity', quantity.value,
+      quantity.quote ?? (quantity.state === 'suggested' ? input.groupSize : null)) : input.groupSize,
     season: season === 'spring' || season === 'summer' || season === 'autumn' || season === 'winter' || season === 'all_season'
       ? season : input.season,
     targetSceneId: candidate?.config.sceneId ?? input.targetSceneId,
@@ -80,8 +81,8 @@ export function decisionPresentation(
       : dimension),
     threeBuckets: {
       ...originalBuckets,
-      userExplicit: sourcedConstraints.map(({ field, op, value, level }) =>
-        `${requirementFields[field].label}：${op === 'neq' ? '排除 ' : ''}${describeRequirementValue(field, value)}${level === 'preference' ? '（偏好）' : ''}`),
+      userExplicit: sourcedConstraints.map(({ field, op, value, level, quote }) =>
+        `${requirementFields[field].label}：${op === 'neq' ? '排除 ' : ''}${describeRequirementValue(field, value, quote)}${level === 'preference' ? '（偏好）' : ''}`),
     },
   };
 }

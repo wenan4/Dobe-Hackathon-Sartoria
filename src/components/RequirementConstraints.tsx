@@ -136,7 +136,9 @@ export function RequirementConstraints({ requirement, onEdit }: RequirementConst
                         <button type="button" className="btn-outline" aria-label={`编辑${fieldLabel}`} onClick={() => setEditingId(item.id)}>编辑</button>
                       )}
                     </div>
-                    <p className="constraint-value">{item.op === 'neq' ? '排除 · ' : ''}{describeRequirementValue(item.field, item.value)}</p>
+                    <p className="constraint-value">{item.op === 'neq' ? '排除 · ' : ''}
+                      {describeRequirementValue(item.field, item.value, item.quote ?? (item.state === 'suggested' ? requirement.input.groupSize : null))}
+                    </p>
                     <p className="constraint-note">{sourceLabels[item.state]}{item.reason && ` · ${item.reason}`}</p>
                     {quoteTurn && (
                       <details className="constraint-quote">

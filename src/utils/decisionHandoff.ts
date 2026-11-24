@@ -1,6 +1,7 @@
 import { CRAFTS } from '../data/crafts';
 import { buildColorSpec, colorReviewText } from '../engine/colorPresentation';
 import { findConstraintChanges } from '../engine/decisionRevisions';
+import { describeRequirementValue } from '../engine/requirementInterview';
 import type { Constraint, ConstraintField, DecisionExport, HandoffReview, Version } from '../types/decisions';
 import { buildPromptPackMarkdown } from './exporters';
 
@@ -85,8 +86,9 @@ export function decisionValueLabel(constraint: Constraint | null): string {
   if (constraint?.field === 'color' && constraint.value === null && constraint.blocking) return '用色要求待核';
   if (!constraint || constraint.value === null) return '待确认';
   const value = constraint.value;
-  const label = typeof value === 'boolean'
-    ? (value ? '要求抗皱' : '无需抗皱')
+  const label = constraint.field === 'quantity'
+    ? describeRequirementValue(constraint.field, value, constraint.quote)
+    : typeof value === 'boolean' ? (value ? '要求抗皱' : '无需抗皱')
     : VALUE_LABELS[String(value)] ?? CRAFTS.find((craft) => craft.id === value)?.shortName ?? String(value);
   return constraint.op === 'neq' ? `排除 ${label}` : label;
 }

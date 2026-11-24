@@ -8,7 +8,7 @@ import {
 } from './requirementColorScope';
 import { unmappedGarmentTerm } from './unmappedGarment';
 import { excludesVenue, namesStageSubject, stageLocations } from './stageLocation';
-import { GARMENT_AFTER_CLASSIFIER, matchOrderQuantities, matchPerPersonQuantity, parseFormQuantity } from './requirementQuantity';
+import { describeOrderQuantity, GARMENT_AFTER_CLASSIFIER, matchOrderQuantities, matchPerPersonQuantity, parseFormQuantity } from './requirementQuantity';
 import { REQUIREMENT_SCHEMA_VERSION } from '../types/decisions';
 import type { ClarificationQuestion, Constraint, ConstraintField, DecisionRequirement, RequirementTurn } from '../types/decisions';
 import type { RequirementInput } from '../types/sartoria';
@@ -192,9 +192,9 @@ export function isRequirementValue(field: ConstraintField, value: unknown): valu
     : requirementFields[field].choices.some(([choice]) => value === choice);
 }
 
-export function describeRequirementValue(field: ConstraintField, value: Constraint['value']): string {
+export function describeRequirementValue(field: ConstraintField, value: Constraint['value'], quote?: string | null): string {
   if (value === null) return '待确认';
-  if (field === 'quantity') return `${value} 套`;
+  if (field === 'quantity' && typeof value === 'number') return describeOrderQuantity(value, quote);
   return requirementFields[field].choices.find(([choice]) => choice === value)?.[1] ?? String(value);
 }
 
@@ -857,7 +857,7 @@ const officialSixSuggestions: Partial<Record<ConstraintField, NonNullable<Constr
 const questions: Partial<Record<ConstraintField, string>> = {
   care: '是否必须机洗，还是可以接受其他洗护方式？',
   scene: '主要在什么场合穿着？例如室内正式会务或户外演出。',
-  quantity: '预计需要多少套？',
+  quantity: '需要订做多少成衣？请注明单位。',
   category: '想定制外套、套装，还是礼服？',
   color: '有哪些指定或排除的色系？',
 };
