@@ -39,15 +39,18 @@ const releaseSha = process.env.SARTORIA_RELEASE_SHA ?? (releaseMode
   ? execFileSync('git', [...gitArgs, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
   : undefined);
 const releaseSuites = [
-  { id: '1', fixtures: holdout, source: 'holdout.ts', hash: HOLDOUT_SHA256, report: `release-${releaseSha}.json` },
-  { id: '2', fixtures: HOLDOUT2_FIXTURES, source: 'holdout2.ts', hash: HOLDOUT2_SHA256, report: `release-2-${releaseSha}.json` },
+  { id: '1', fixtures: holdout, source: 'holdout.ts', hash: HOLDOUT_SHA256, report: `release-${releaseSha}.json`,
+    assumeNoConflictsWhenOmitted: true },
+  { id: '2', fixtures: HOLDOUT2_FIXTURES, source: 'holdout2.ts', hash: HOLDOUT2_SHA256, report: `release-2-${releaseSha}.json`,
+    assumeNoConflictsWhenOmitted: false },
 ];
 const requestedSuite = process.env.SARTORIA_RELEASE_SUITE;
 if (releaseSha !== undefined && requestedSuite !== undefined && !releaseSuites.some(({ id }) => id === requestedSuite)) {
   throw new Error('SARTORIA_RELEASE_SUITE must be 1 or 2.');
 }
 const suites = releaseSha === undefined
-  ? [{ id: 'historical', fixtures, source: 'fixtures.ts', hash: FROZEN_SHA256, report: 'report.json' }]
+  ? [{ id: 'historical', fixtures, source: 'fixtures.ts', hash: FROZEN_SHA256, report: 'report.json',
+    assumeNoConflictsWhenOmitted: true }]
   : releaseSuites.filter(({ id }) => requestedSuite === undefined || requestedSuite === id);
 
 function verifyReleaseSource(expectedSha: string) {
@@ -328,9 +331,28 @@ function exactArchiveSnapshot(version: Version, record: ReturnType<typeof archiv
     record.proposal !== null && record.promptPack !== null;
 }
 
-function scoreRevisions(fixture: Fixture, initial: Version) {
+function scoreRevisionConflicts(
+  reported: readonly string[],
+  expected: readonly string[] | undefined,
+  assumeNoConflictsWhenOmitted: boolean,
+): boolean | null {
+  if (expected === undefined && !assumeNoConflictsWhenOmitted) return null;
+  return sameSet(reported, expected ?? []);
+}
+
+test('distinguishes missing revision conflict annotations from explicit expectations', () => {
+  expect(scoreRevisionConflicts(['care'], undefined, false)).toBeNull();
+  expect(scoreRevisionConflicts(['care'], undefined, true)).toBe(false);
+  expect(scoreRevisionConflicts([], undefined, true)).toBe(true);
+  expect(scoreRevisionConflicts(['care'], [], false)).toBe(false);
+  expect(scoreRevisionConflicts([], [], false)).toBe(true);
+  expect(scoreRevisionConflicts(['care', 'fabric'], ['fabric', 'care'], false)).toBe(true);
+  expect(scoreRevisionConflicts(['care'], ['care', 'fabric'], false)).toBe(false);
+});
+
+function scoreRevisions(fixture: Fixture, initial: Version, assumeNoConflictsWhenOmitted: boolean) {
   const rows: {
-    turn: string; decision: string; preview: boolean; conflicts: boolean; patch: boolean; stored: boolean;
+    turn: string; decision: string; preview: boolean; conflicts: boolean | null; patch: boolean; stored: boolean;
     invariant: boolean; preservedExistingHard: boolean; expectedState: boolean;
     roundTrip: boolean; archiveRoundTrip: boolean; reviewOnly: boolean; reason: string | null;
     catalogOutcome: CatalogExpectation['outcome'] | null; catalog: boolean | null;
@@ -347,7 +369,8 @@ function scoreRevisions(fixture: Fixture, initial: Version) {
     history = { ...history, feedbackDraft: step.text };
     const preview = previewDecisionRevision(before, history.feedbackDraft);
     const patch = sameSet(preview?.requestedPatch.map(({ field }) => field) ?? [], revision.requestedFields);
-    const conflicts = sameSet(preview?.conflicts.map(({ field }) => field) ?? [], step.conflicts ?? []);
+    const conflicts = scoreRevisionConflicts(preview?.conflicts.map(({ field }) => field) ?? [],
+      step.conflicts, assumeNoConflictsWhenOmitted);
     const previewSafe = beforeBytes === JSON.stringify(history.versions.at(-1));
     let stored = false;
     let reason: string | null = null;
@@ -420,7 +443,7 @@ function scoreRevisions(fixture: Fixture, initial: Version) {
       catalogOutcome: step.catalog?.outcome ?? null, catalog: currentCatalogExpectation(step.catalog, actual.match, actual.candidate) });
   }
   const stepsCorrect = rows.every(({ preview, patch, conflicts, stored, invariant, expectedState }) =>
-    preview && patch && conflicts && stored && invariant && expectedState);
+    preview && patch && conflicts !== false && stored && invariant && expectedState);
   return {
     initiallySaveable, initialArchiveValid, rows,
     full: stepsCorrect && rows.every(({ roundTrip }) => roundTrip),
@@ -481,7 +504,7 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
         ? scoreRevisions(fixture, buildDecisionVersion({
           projectId: fixture.id, previous: null, requirement, match: matching, candidate: matching.recommended,
           revision: null, now: RUN_TIME,
-        }))
+        }), suite.assumeNoConflictsWhenOmitted)
         : null;
       return {
         id: fixture.id, group: fixture.group, catalogOutcome: catalogExpected?.outcome ?? null,
@@ -526,6 +549,7 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
       ]).filter((probe) => probe.catalogOutcome === outcome);
       return { passed: probes.filter(({ catalog }) => catalog === true).length, total: probes.length };
     }
+    const revisionSteps = rows.flatMap(({ revision }) => revision?.rows ?? []);
     const report = {
       baseline: BASELINE, productionSha: releaseSha ?? null, suite: suite.id, fixtureFile: suite.source,
       fixtureSha256: suite.hash, old: totals('old'), current: totals('current'),
@@ -537,20 +561,21 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
       unverifiedHard: rows.filter(({ current }) => current.unverifiedHard.length > 0).length,
       unknownOverwrites: rows.filter(({ current }) => current.unresolvedOverwrites.length > 0).length,
       revisions: {
-        cases: revisionCount, turns: rows.flatMap(({ revision }) => revision?.rows ?? []).length,
+        cases: revisionCount, turns: revisionSteps.length,
         invariants: rows.filter(({ revision }) => revision?.invariants).length,
         full: rows.filter(({ revision }) => revision?.full).length,
         initiallySaveable: rows.filter(({ revision }) => revision?.initiallySaveable).length,
-        storedRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ roundTrip }) => roundTrip) ?? []).length,
+        storedRoundTrips: revisionSteps.filter(({ roundTrip }) => roundTrip).length,
         initialArchives: rows.filter(({ revision }) => revision?.initialArchiveValid).length,
         archiveFull: rows.filter(({ revision }) => revision?.archiveFull).length,
-        archiveRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ archiveRoundTrip }) => archiveRoundTrip) ?? []).length,
-        reviewOnlyRoundTrips: rows.flatMap(({ revision }) => revision?.rows.filter(({ archiveRoundTrip, reviewOnly }) =>
-          archiveRoundTrip && reviewOnly) ?? [],
-        ).length,
-        preservedExistingHard: rows.flatMap(({ revision }) =>
-          revision?.rows.filter(({ preservedExistingHard }) => preservedExistingHard) ?? [],
-        ).length,
+        archiveRoundTrips: revisionSteps.filter(({ archiveRoundTrip }) => archiveRoundTrip).length,
+        reviewOnlyRoundTrips: revisionSteps.filter(({ archiveRoundTrip, reviewOnly }) => archiveRoundTrip && reviewOnly).length,
+        preservedExistingHard: revisionSteps.filter(({ preservedExistingHard }) => preservedExistingHard).length,
+        conflictAnnotations: {
+          passed: revisionSteps.filter(({ conflicts }) => conflicts === true).length,
+          failed: revisionSteps.filter(({ conflicts }) => conflicts === false).length,
+          unscored: revisionSteps.filter(({ conflicts }) => conflicts === null).length,
+        },
       },
       main: { score: hardScore(mainExpected, hard(main)), matching: matchDecision(main).status },
       rows,

@@ -147,6 +147,8 @@
 
 第二批首次报告的存档为 `first-unseen-release-2-eba7e0bd03d474a9d60b709ec6392f168e5357a6.json`，SHA-256 为 `c17c7a6cfbfcb71329a30d3bd565c056d2602c1378c2a341cb11aab5a3c40eac`。两批在该候选上的 `npm run test:release` 返回失败。
 
+此表保留首次判分和对应提交。后续评分区分未填写、显式空集合和明确列出冲突字段。第二批省略的改稿冲突项单列为未评分，仍逐轮检查所提议的变更、确认后的硬约束和归档结果。原始样本及第一批沿用冻结时的空缺语义。此次方法修正未改动任何冻结标签，后续在这两批已观察样本上的运行均为已知样本回归。
+
 ## 复核
 
 在仓库根目录执行 `npm exec -- vitest run evaluation/blind.test.ts`。运行器核对冻结哈希 `731df75840720f873ffd0846fbbaac0ebb7d0ca13716d8a42bb51f3d7239943a`，从基线提交单独读取并编译旧规则，使用两版各自的模拟目录。逐样本计数和证据写入 `node_modules/.cache/sartoria-baseline/report.json`。Vitest 通过表示评测执行完成，放行结论以表内指标为准。
