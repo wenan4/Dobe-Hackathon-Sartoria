@@ -34,6 +34,7 @@ describe('garment requirements from colloquial brief wording', () => {
     '演员数量是二十三位。每人穿自己的礼服。',
     '每人的件数为三。',
     '每人的领用数量为三套。',
+    '上衣按两件装交付，数量另定。',
   ])('withholds a total unless a headcount and allocation both identify it: %s', (text) => {
     expect(extractRevisionConstraints({ id: 'unconfirmed-order-size', text })
       .some(({ field, value }) => field === 'quantity' && value !== null)).toBe(false);
@@ -93,6 +94,7 @@ describe('garment requirements from colloquial brief wording', () => {
   it.each([
     ['订四件两件式演出服。', 4, '4 件'],
     ['这批要做六条长裙。', 6, '6 条'],
+    ['想订一件装饰简洁的外套。', 1, '1 件'],
     ['名单有九名店员，每人领两身西服。', 18, '18 身'],
     ['成衣件数为二十二。', 22, '22 件'],
     ['订单数量为十三。', 13, '13'],

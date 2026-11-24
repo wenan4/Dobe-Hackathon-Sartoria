@@ -7,7 +7,8 @@ const GARMENT_NOUN = '(?:外套|夹克|上衣|西服|西装|礼服|礼裙|长裙
 // A garment noun may follow a brief modifier, such as the intended occasion or style.
 export const GARMENT_AFTER_CLASSIFIER = `(?!事|要求|意见|建议|信息|规定|规则|理由|备注|说明|反馈|(?:洗护|养护|交付|工艺|安全)(?:的)?(?:要求|建议|说明|规则))[:：]?(?=[^，,；;。！？!?、:：\\d]{0,12}${GARMENT_NOUN})`;
 const DOCUMENT_AFTER_PORTION = '(?![^，,；;。！？!?、]{0,4}(?:文件|单据|合同|报表|统计|清单|记录|报价|说明|方案|报告|协议))';
-const ORDER_UNIT = `(?:套(?:装)?|件|身|(?:份${DOCUMENT_AFTER_PORTION}|条)${GARMENT_AFTER_CLASSIFIER})(?![式套装])`;
+// 件装 can describe pack size; 装饰 following a classifier describes the garment instead.
+const ORDER_UNIT = `(?:套(?:装)?|件|身|(?:份${DOCUMENT_AFTER_PORTION}|条)${GARMENT_AFTER_CLASSIFIER})(?![式套]|装(?!饰))`;
 const QUANTITY = new RegExp(`${COUNT_START}(${NUMBER})\\s*(${ORDER_UNIT})`, 'g');
 const SINGLE_GARMENT = new RegExp(`(?:做|订|定做|订制|定制)\\s*([件条])(?![式套])${GARMENT_AFTER_CLASSIFIER}`);
 const PERSON_ROLE = '(?:员工|同事|职工|职员|工作人员|接待人员|礼宾人员|技术人员|成员|队员|老师|学生|演员|志愿者|售货员|店员|导购|服务员|组员)';
