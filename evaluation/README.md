@@ -9,7 +9,7 @@
 
 ## 复跑
 
-`npm run test:release` 使用单独冻结的 24 条验收简报，核对候选版本后执行放行断言。任一断言失败，命令以非零状态退出。设置 `SARTORIA_RELEASE_SHA` 可复核指定提交，当前检出的源码、评分代码、样本和运行配置须与该提交一致。每个候选的报告写入 `node_modules/.cache/sartoria-baseline/release-<SHA>.json`。
+`npm run test:release` 运行两批独立冻结的验收简报，每批 24 条。命令核对候选版本、逐批生成报告，任一放行断言失败即返回非零状态。设置 `SARTORIA_RELEASE_SUITE` 为 `1` 或 `2` 可单独复跑。设置 `SARTORIA_RELEASE_SHA` 可核验指定提交，当前源码、评分代码、样本和运行配置须与该提交一致。两批报告分别写入 `node_modules/.cache/sartoria-baseline/` 下的 `release-<SHA>.json` 和 `release-2-<SHA>.json`。
 
 在仓库根目录使用 Node.js 24，安装锁定依赖后运行 `npm exec -- vitest run evaluation/blind.test.ts`。记录评测时新版本 SHA 和冻结样本哈希。断开模型路径并清空项目历史，按相同原文和顺序分别运行纯本地基线与新版本。
 

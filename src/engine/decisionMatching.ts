@@ -167,6 +167,11 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
     source: record?.source ?? simulationSource('craft', id),
   }));
   const structuralEvidence: AssetEvidence[] = [];
+  if (pattern && selectedCrafts.length > 1 &&
+      !pattern.profile.craftPackages.some((bundle) => selectedCrafts.every(({ id }) => bundle.includes(id)))) {
+    structuralEvidence.push(evidence(teamEvidence(patternAsset), 'craftPackageCompatibility', null, 'unknown',
+      '所选工艺缺少在该版型上共同使用的目录记录，组合需由工坊复核。'));
+  }
   if (!pattern) {
     structuralEvidence.push(evidence(patternAsset, 'catalog', null, 'conflict', '版型 ID 未收录于当前目录。'));
   }

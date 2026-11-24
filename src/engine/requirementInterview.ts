@@ -12,16 +12,19 @@ const craftAliases: Partial<Record<string, string>> = {
   'crf-full-canvas-guiba': '全毛衬(?:手工)?归拔',
 };
 
+const TWO_PIECE_COMPOSITION = '(?:分成|分为|由)(?:上装|上衣|上身)(?:和|与|加|配|及|、)(?:裙子|半身裙|长裙|下装|裤子)(?:(?:这)?(?:两|二|2)件)?';
+const WORKWEAR = '工作服|员工服|职业[服装]|工装';
+
 export const requirementFields = {
   businessType: { label: '业务类型', choices: [
-    ['corporate_uniform', '团体职业服', '团装|团服|团定|团体(?:定制|款|套装|工装|工作服|职业[服装])|团队(?:工装|制服|统一着装|工作服|职业[服装])|(?:公司|企业|单位|员工|职工|门店|店里|柜台)(?:的)?(?:工装|制服|工作服|职业[服装])|会务服|集体定制|(?:批量|统一)(?:定做|订做|定制)|工服团单|(?:给|为)(?:整个|我们)?(?:公司|企业|单位|部门|团队|员工|职工|会务组)(?:的?(?:员工|同事|成员|职员))?(?=.{0,12}(?:定做|订做|做|定制|配|准备|订))|(?:给|为).{0,8}(?:员工|同事|职工|成员)(?=.{0,12}(?:每人|各一套|各做|各发|人手|一人一套))'],
-    ['private_couture', '个人高定', '个人高定|个人定制|私人定制|个人礼服|私人高定|私人订制|私定|私订|个人款|单人定[制做]|只给我自己|我一个人穿|我自己穿|(?:只)?给自己(?:做|订|定做|定制|准备)|(?:给)?我个人(?:定[制做]|订[做制]?|做|量身)'],
+    ['corporate_uniform', '团体职业服', `团装|团服|团定|团体(?:定制|款|套装|工装|工作服|职业[服装])|团队(?:工装|制服|统一着装|工作服|职业[服装])|(?:公司|企业|单位|员工|职工|门店|店里|柜台)(?:的)?(?:工装|制服|工作服|职业[服装])|会务服|集体定制|(?:批量|统一)(?:定做|订做|定制)|(?:统一|集体)(?:${WORKWEAR})|(?:员工|同事|职工|团队)(?:要|均|统一)?穿的.{0,4}(?:${WORKWEAR})|工服团单|(?:给|为)(?:整个|我们)?(?:公司|企业|单位|部门|团队|员工|职工|会务组)(?:的?(?:员工|同事|成员|职员))?(?=.{0,12}(?:定做|订做|做|定制|配|准备|订))|(?:给|为).{0,8}(?:员工|同事|职工|成员)(?=.{0,12}(?:每人|各一套|各做|各发|人手|一人一套))|员工服|工作服`],
+    ['private_couture', '个人高定', '个人高定|个人定制|个人定做|个人订[制做]|私人定制|个人礼服|私人高定|私人订制|私定|私订|个人款|单人定[制做]|只给我自己|我一个人穿|我(?:自己|本人)穿|(?:只)?给(?:我)?(?:自己|本人)(?:做|订[做制]?|定做|定制|准备|量体)|(?:给)?我个人(?:定[制做]|订[做制]?|做|量身)'],
   ] },
   quantity: { label: '数量', choices: [] },
   scene: { label: '场景', choices: [
     ['formal_evening', '正式晚宴', '(?:室内(?:的)?(?:正式)?)?晚宴|晚礼宴|晚会|慈善宴会|正式酒会'],
     ['indoor_performance', '室内演出', '室内.{0,6}(?:舞台|演出|演奏|表演)|音乐厅|剧院'],
-    ['indoor_formal', '室内正式', '室内.{0,7}(?:正式|会务|峰会|会议|商务|接待|典礼|论坛)|(?:正式|会务|论坛|会展|接待).{0,7}室内|正式礼厅|会议中心|礼宾接待|会议接待|商务接待'],
+    ['indoor_formal', '室内正式', '(?:室内|展厅|馆内|会议厅|报告厅).{0,7}(?:正式|会务|峰会|会议|商务|接待|迎宾|典礼|论坛)|(?:正式|会务|论坛|会展|接待).{0,7}(?:室内|展厅|馆内)|正式礼厅|会议中心|礼宾接待|会议接待|商务接待'],
     ['outdoor_stage', '户外舞台', '(?:户外|室外|露天).{0,7}(?:舞台|演出|演奏|表演)|(?:舞台|演出|演奏|表演).{0,4}(?:在|设在)(?:户外|室外|露天)'],
   ] },
   season: { label: '季候', choices: [
@@ -36,11 +39,13 @@ export const requirementFields = {
     ['jacket', '外套', '外套|夹克|上衣|短褂|罩衫'],
   ] },
   patternStructure: { label: '版型结构', choices: [
-    ['h_line', 'H 型直身', '[hHＨ]\\s?[型形]|直身版型|直身结构|直筒版型|直身廓形'],
-    ['two_piece', '两件式', '两件式|两件套|二件式|二件套|两件装|上下(?:分成|分为)?两件|外套(?:搭|配|和|加|与).{0,5}(?:连衣裙|长裙)|(?:连衣裙|长裙)(?:搭|配|和|加|与).{0,5}外套'],
+    ['h_line', 'H 型直身', '[hHＨ]\\s?[型形]|(?:字母\\s*)?[hHＨ]\\s*(?:一样|那样)(?:的)?(?:直|笔直)|直身版型|直身结构|直筒版型|直身廓形'],
+    ['two_piece', '两件式', `两件式|两件套|二件式|二件套|两件装|上下(?:分成|分为)?两件|${TWO_PIECE_COMPOSITION}|外套(?:搭|配|和|加|与).{0,5}(?:连衣裙|长裙)|(?:连衣裙|长裙)(?:搭|配|和|加|与).{0,5}外套`],
   ] },
   collar: { label: '领型', choices: [
-    ['cross_open', '交领开襟', '交领'], ['diagonal', '斜襟', '斜襟'], ['stand', '立领', '立领'], ['lapel', '翻领', '翻领|驳领|西装领'],
+    ['cross_open', '交领开襟', '交领'], ['diagonal', '斜襟', '斜襟'],
+    ['stand', '立领', '立领|竖领|领(?:子|口|型)(?:得|要|必须|应该|就|会)?(?:竖|立)(?:起|起来|着)'],
+    ['lapel', '翻领', '(?:西装|西服)(?:的)?(?:窄|宽|尖|平){0,2}(?:翻领|驳领)|翻领|驳领|西装领|西服领'],
   ] },
   fabric: { label: '面料', choices: [
     ['blend', '混纺', '(?:棉涤|丝毛|毛丝|涤棉|毛涤)?混纺'], ['silk', '真丝', '纯真丝(?!混纺)|真丝(?!混纺)|桑蚕丝(?!混纺)|纯蚕丝|全蚕丝'],
@@ -48,27 +53,27 @@ export const requirementFields = {
     ['acetate', '醋酸', '醋酸(?!混纺)'], ['velvet', '丝绒', '丝绒|天鹅绒'],
   ] },
   color: { label: '色系', choices: [
+    ['ivory_rose', '象牙玫瑰', '象牙玫瑰|米白(?:撞|拼|拼接|搭|搭配|配|加|与)(?:亮粉|玫瑰粉)'],
     ['navy', '藏青', '藏青(?:色)?|藏蓝(?:色)?|深海军蓝|海军(?:深|藏)?蓝|深蓝(?:色)?|午夜蓝'],
     ['obsidian', '墨黑', '墨黑|黑色|炭黑|纯黑|纯墨色|墨色'], ['ivory', '象牙白', '象牙白|月白|米白(?:色)?|乳白(?:色)?'],
-    ['crimson', '绯红', '绯红|深红(?:色)?|酒红(?:色)?|正红(?:色)?'],
+    ['crimson', '绯红', '绯红|绛红(?:色)?|枣红(?:色)?|深红(?:色)?|酒红(?:色)?|正红(?:色)?'],
     ['stone_gray', '暖灰／深灰', '石板灰|石灰色|暖灰(?:色)?|深灰(?:色)?|炭灰(?:色)?|灰色'],
     ['pine_green', '松绿', '松墨绿|松绿(?:色)?|墨绿(?:色)?|深绿(?:色)?'],
     ['champagne', '香槟', '香槟(?:金|色)'], ['mist_blue', '雾蓝', '雾蓝(?:色)?|浅蓝(?:色)?'],
-    ['ivory_rose', '象牙玫瑰', '象牙玫瑰|米白.{0,3}(?:亮粉|玫瑰粉)'],
     ['earth_brown', '大地棕', '大地棕|棕色|咖啡色|土棕|墨褐|茶褐|深褐(?:色)?'], ['neutral_silk', '丝本色', '丝本色|真丝原色'],
   ] },
   motif: { label: '装饰纹样', choices: [
     ['subtle_jacquard', '含蓄暗纹', '暗纹|暗花|低调提花'], ['plain', '素面', '素面|纯色无纹|无纹样|无花纹'],
   ] },
   lengthRatio: { label: '长度比例', choices: [
-    ['mid_hip', '及臀中', '臀中|及臀|臀部(?:中间|中点)|(?:到|至|齐)臀部'], ['ankle', '及踝', '及踝|(?:到|至|齐|及)脚踝|到踝部'],
-    ['floor', '及地', '及地|拖地|曳地|落地长|到地(?:面|板)?|贴地长'],
+    ['mid_hip', '及臀中', '臀中|及臀|臀部(?:正中|中间|中段|中点)|(?:到|至|齐)臀部'], ['ankle', '及踝', '及踝|(?:到|至|齐|及)脚踝|到踝部'],
+    ['floor', '及地', '及地|拖地|曳地|拂地|擦地|落地长|到地(?:面|板)?|贴地长|裙(?:摆|脚)齐地'],
   ] },
   easeAllowance: { label: '松弛余量', choices: [
-    ['arm_mobility', '肩臂活动余量', '(?:不要|不能|别|不|避免)压肩|(?:不要|不能|别|不)勒肩|(?:不要|不能|别|不)卡(?:住)?(?:手臂|胳膊|臂|肩)|(?:不|别)夹(?:腋下|胳膊)|(?:抬|举|举起)(?:胳膊|臂|手)(?:时)?(?:、坐奏都要方便|.{0,6}(?:不卡|方便|自然|顺畅|自如|舒展|伸得开|不受限|不紧绷|不(?:能|要|会)?卡住|有余量))|肩(?:臂|背)(?:活动)?余量|(?:袖笼|袖窿)放量|(?:坐奏|坐着演奏).{0,5}(?:方便|不卡|活动)'],
+    ['arm_mobility', '肩臂活动余量', '(?:不要|不能|别|不|避免)压肩|(?:不要|不能|别|不)勒肩|(?:不要|不能|别|不)卡(?:住)?(?:手臂|胳膊|臂|肩)|(?:不|别)夹(?:腋下|胳膊)|(?:抬|举|举起)(?:胳膊|臂|手)(?:时)?(?:、坐奏都要方便|.{0,6}(?:不卡|方便|自然|顺畅|自如|舒展|伸得开|不受限|不紧绷|不(?:能|要|会)?卡住|有余量))|(?:袖子|袖管|胳膊|手臂|双臂).{0,6}(?:抬|举)得(?:起(?:来)?|开|高|动)|肩(?:臂|背)(?:活动)?余量|(?:袖笼|袖窿)放量|(?:坐奏|坐着演奏).{0,5}(?:方便|不卡|活动)'],
   ] },
   closure: { label: '开合细节', choices: [
-    ['no_visible_buttons', '无外露纽扣', '无外露(?:的)?(?:纽扣|扣子|扣)|不(?:要|用|许)(?:看见|露出|外露)(?:纽扣|扣子|扣)|(?:纽扣|扣子|扣件)(?:也|仍然?|还是|始终|一律)?(?:都)?(?:不要|不能|不可|不得|不许|禁止)(?:外露|露(?:出|在外)?)|隐藏纽扣|隐门襟|无明扣|无扣式'],
+    ['no_visible_buttons', '无外露纽扣', '无外露(?:的)?(?:纽扣|扣子|扣)|不(?:要|用|许)(?:看见|露出|外露)(?:纽扣|扣子|扣)|(?:纽扣|扣子|扣件)(?:也|仍然?|还是|始终|一律)?(?:都)?(?:不要|不能|不可|不得|不许|禁止)(?:外露|露(?:出|在外)?)|隐藏纽扣|隐门襟|暗扣|隐扣|无明扣|无扣式'],
     ['visible_buttons', '外露纽扣', '外露(?:的)?(?:纽扣|扣子|扣)|明扣'],
   ] },
   care: { label: '洗护', choices: [
@@ -88,7 +93,7 @@ export const requirementFields = {
     ['modern', '现代利落', '现代(?:感|风格|简约|利落)|极简商务'], ['new_chinese', '新中式', '新中式'],
   ] },
   craft: { label: '工艺', choices: CRAFTS.map((craft): Choice => [
-    craft.id, craft.shortName, [craft.name, craft.shortName].map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    craft.id, craft.shortName, [craft.name, craft.shortName, craft.code, craft.id].map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
       .concat(craftAliases[craft.id] ?? []).join('|'),
   ]) },
 } satisfies Record<ConstraintField, { label: string; choices: readonly Choice[] }>;
@@ -118,9 +123,10 @@ const MANDATORY = /(?:必须|务必|只能|仅限|(?<!未|没|不)指定|非要|
 const NEGATIVE_HEAD = '不能|不可|不要|不得|不许|避免|避开|远离|不接受|不考虑|排除|不想要|不想|不喜欢|不希望|不偏好|不用|不选|不准|不宜|不像|不做|不采用|不是|不在|不使用|不允许|不支持|别用|别选|别要|别像|别|拒绝|禁止|严禁|禁用|禁|忌用|切忌|谢绝|杜绝|不能有|无外露|无|非(?!要)|绝不';
 const NEGATION = new RegExp(`(?:${NEGATIVE_HEAD})(?:\\s|再|给|要|订购|订|选|用|使用|采用|是|有|含有|含|带|拿|把|放进|送去|叫人|像|做成|做|那种|类似|太|特别|那么|任何|一样|略带|的)*$`);
 const COORDINATOR = /^(?:、|和|或(?:者|是)?|及|与|\/|／)\s*(?:也|同样)?$/;
-const FORBIDDEN_AFTER = /^(?:(?:都|也)?(?:不要|不做|不行|不可以|不能用|不考虑|不接受|不采用|不选|不一样|区别开|禁用|被排除|排除|别用|不准用|一律不用)|(?:一律|都|也)禁)/;
+const FORBIDDEN_AFTER = /^(?:(?:则|都|也|一律|一定|明确|坚决|绝对|完全|仍然?|还|始终|严格|暂且)\s*)*(?:不要|不做|不用|不行|不可以|不能用|不考虑|不接受|不采用|不选|不一样|区别开|禁用|禁止|被排除|排除|别用|不准用|禁)/;
 const WITHDRAWAL = /(?:撤回|撤销|取消|放弃|去掉|撤掉|不再要求|不要求|不需要|不强求|不强制|不硬性要求|不是必须|并非必须|不必|不用限定|不限制|不再限定|无需|不限|无要求|没有.{0,8}要求|不作要求)/;
-const AMBIGUITY = /(?:不确定|不一定|还没决定|未指定|没定|待确认|未定|再说|先不定|待定|待选|没拍板|先留白|随意|都行|都可以|无所谓|看情况|左右|大概|差不多|约(?:为|有)?\s*[\d一二三四五六七八九十]|[\d一二三四五六七八九十]\s*(?:到|至|[-~～])\s*[\d一二三四五六七八九十])/;
+const UNAPPROVED_WITHDRAWAL = /(?:(?:尚未|还没(?:有)?|未曾|未经|没有|还未|未)(?:被|能)?(?:获准|得到批准|批准|同意|授权|许可|允许)?|先别|暂不|不能|别)(?:直接|自行|正式|先)?(?:撤回|撤销|取消|作废|去掉|撤掉)/;
+const AMBIGUITY = /(?:不确定|不一定|还没决定|未指定|没定|待确认|未定|再说|先不定|待定|待选|没拍板|先留白|先别(?:填|定|选|决定)|暂不(?:定|选|决定)|等.{0,10}(?:再定|确认|决定|审批|批复|回复|建议)|随意|都行|都可以|无所谓|看情况|左右|大概|差不多|约(?:为|有)?\s*[\d一二三四五六七八九十]|[\d一二三四五六七八九十]\s*(?:到|至|[-~～])\s*[\d一二三四五六七八九十])/;
 const PROTECTED = /(?:不动|保持不变|保持原样|不变|保持原来|按原来|照原来|保留原|维持原|照旧|维持现状|仍然保留|继续保留|依然保留)/;
 const CHANGE = /(?:改成|改为|换成|换为|替换为|调整为|调整成|调整到|追加至|加到|增至|增加到|减至|减到|缩减到|提高到|降到|改用|换用|改做|(?<![修更篡])改(?!良|进|善|造|版|动|编|过|写|稿)(?=\S))/;
 const ALTERNATIVE = /(?:或(?:者|是)?|二选一|择一|任选)/;
@@ -212,14 +218,40 @@ function predicateFor(field: ConstraintField, value: FieldMatch['value'], exclud
 }
 
 const fieldMentions: Partial<Record<ConstraintField, RegExp>> = {
-  color: /颜色|色系|色彩|配色|主色/, fabric: /材质|面料|纯棉|亚麻|锦纶/, care: /洗护|养护|水洗/,
+  color: /颜色|色系|色彩|色调|色号|配色|主色|紫色|粉色|橙色|黄色|红色|宝蓝|靛蓝|天蓝|橄榄绿|荧光绿|芥末黄|柠檬黄|浅紫|紫红|桃粉/,
+  fabric: /材质|面料|布料|用料|料子|主料|织物|纤维成分|成分比例|纯棉|棉质|亚麻|苎麻|锦纶|聚酰胺|真皮|皮革|莱赛尔|天丝|粘胶/,
+  care: /洗护|养护|清洗方式|打理方式|水洗/,
   quantity: /数量|套数|件数/, scene: /场合|场景/, season: /季候|季节/, category: /成衣品类|服装品类/,
-  luster: /光泽|亮度/, closure: /门襟|纽扣|扣子|扣合方式/, motif: /纹样|图案/, easeAllowance: /松量|松弛余量|袖笼|袖窿/,
-  lengthRatio: /衣长|裙长|下摆长度|长度比例/, collar: /领型/, patternStructure: /版型结构|廓形/,
+  luster: /光泽|亮度/, closure: /门襟(?!\s*(?:工艺|刺绣|装饰|纹样|钉缀|图案))|纽扣|扣子|扣合方式/, motif: /纹样|图案/,
+  easeAllowance: /松量|松弛余量|袖笼|袖窿|肩臂活动|肩背活动|袖管活动/, lengthRatio: /衣长|裙长|裙脚|裙摆|下摆|长度比例/,
+  collar: /领型/, patternStructure: /版型结构|廓形/,
   businessType: /业务类型|定制类型/, craft: /工艺|盘扣|刺绣|珠片|亮片/,
 };
 
 type LocatedField = Pick<FieldMatch, 'start' | 'end'> & { field: ConstraintField };
+
+function catalogScopedMatches(field: ConstraintField, matches: FieldMatch[], target: string, craftMatches: FieldMatch[], collarMatches: FieldMatch[]) {
+  if (field === 'craft') return matches;
+  return matches.filter((match) => {
+    if (craftMatches.some(({ start, end }) => start <= match.start && end >= match.end &&
+      /(?:工艺|织法|缝法|点缀|缝制).{0,8}$/.test(target.slice(0, start)))) return false;
+    if (field === 'category') {
+      if (collarMatches.some(({ start, end }) => start <= match.start && end >= match.end)) return false;
+      if (match.value === 'two_piece' && (/(?:版型|结构|廓形|剪裁).{0,5}$/.test(target.slice(0, match.start)) ||
+        /^(?:的)?(?:结构|构成|版型)/.test(target.slice(match.end)))) return false;
+    }
+    if (field === 'fabric' && (/(?:仿|仿制|像|仿若|形似|类似|接近)\s*$/.test(target.slice(0, match.start)) ||
+      /^(?:般|一样|似的|手感|质感|效果|光感)/.test(target.slice(match.end)))) return false;
+    if (field === 'collar' && match.value === 'diagonal' && !/领(?:子|口|型).{0,7}$/.test(target.slice(0, match.start)) &&
+      craftMatches.some(({ start }) => start >= match.end && /^(?:部位|处|上|工艺|位置)?\s*(?:指定|使用|选用|用|缀|缝|做|加)$/.test(target.slice(match.end, start)))) return false;
+    return true;
+  });
+}
+
+function explicitlyRequired(prefix: string, suffix: string, statusScope: string): boolean {
+  return MANDATORY.test(statusScope) || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(suffix) ||
+    !PREFERENCE.test(statusScope) && /(?:需要|限定|必须|锁定|只能|只用|要用|得用|只接受|非得|固定|最少|至少|至多)/.test(statusScope);
+}
 
 function nearbyLanguage(target: string, current: LocatedField, anchors: LocatedField[]) {
   const closestBefore = (start: number) => anchors.findLast(({ end }) => end <= start);
@@ -240,15 +272,21 @@ function nearbyLanguage(target: string, current: LocatedField, anchors: LocatedF
 function readSegment(segment: string): Observation[] {
   const untouched = /(?:其余|其他|其它|剩下(?:的)?).*$/.exec(segment);
   const clause = untouched && PROTECTED.test(untouched[0]) ? segment.slice(0, untouched.index).trim() : segment;
-  if (!clause || PROTECTED.test(clause)) return [];
+  if (!clause || PROTECTED.test(clause) || UNAPPROVED_WITHDRAWAL.test(clause)) return [];
   const change = CHANGE.exec(clause);
   const changeLead = change ? clause.slice(0, change.index) : '';
-  const negativeChange = /(?:不要|不能|不得|不许)(?:再)?(?:把|将|从).{0,12}$/.test(changeLead);
+  const negativeChange = /(?:不要|不能|不得|不许|别|不)(?:再)?(?:(?:把|将|从).{0,12})?$/.test(changeLead);
   const offset = change ? change.index + change[0].length : 0;
   const target = clause.slice(offset);
+  const craftMatches = patternsFor('craft', target);
+  const collarMatches = patternsFor('collar', target);
+  const replacedCrafts = change && !negativeChange && craftMatches.length
+    ? patternsFor('craft', changeLead).filter(({ value }) => !craftMatches.some((next) => next.value === value)) : [];
   const matchesByField = requirementFieldIds.map((field) => ({
     field,
-    matches: patternsFor(field, target).sort((left, right) => left.start - right.start),
+    matches: catalogScopedMatches(field,
+      field === 'craft' ? craftMatches : field === 'collar' ? collarMatches : patternsFor(field, target),
+      target, craftMatches, collarMatches).sort((left, right) => left.start - right.start),
   }));
   const recognized = matchesByField.flatMap(({ field, matches }) => matches.map(({ start, end }) => ({ field, start, end })));
   const fields = matchesByField.map(({ field, matches }) => {
@@ -263,11 +301,17 @@ function readSegment(segment: string): Observation[] {
     .sort((left, right) => left.end - right.end);
   const observations: Observation[] = [];
   for (const { field, matches, mention } of fields) {
+    if (field === 'craft') {
+      observations.push(...replacedCrafts.map(({ value, start }) => ({
+        ...unresolved(field, clause, WITHDRAWAL_REASON),
+        withdraws: predicateFor(field, value, NEGATION.test(changeLead.slice(0, start))),
+      })));
+    }
     if (!matches.length && mention) {
-      const { prefix, statusScope } = nearbyLanguage(target, { field, start: mention.index, end: mention.index + mention[0].length }, anchors);
+      const { prefix, suffix, statusScope } = nearbyLanguage(target, { field, start: mention.index, end: mention.index + mention[0].length }, anchors);
       if (WITHDRAWAL.test(statusScope)) observations.push(unresolved(field, clause, WITHDRAWAL_REASON));
       else if (AMBIGUITY.test(statusScope)) observations.push(unresolved(field, clause, '原话给出的范围或取值尚不确定。', MANDATORY.test(statusScope)));
-      else if (MANDATORY.test(statusScope) || NEGATION.test(prefix)) observations.push(unresolved(field, clause, '原话包含目录规则暂不能归一化的要求。', true));
+      else if (explicitlyRequired(prefix, suffix, statusScope)) observations.push(unresolved(field, clause, '原话包含目录规则暂不能归一化的要求。', true));
       continue;
     }
     const fieldObservations = matches.map(({ value, start, end }): Observation => {
@@ -280,8 +324,14 @@ function readSegment(segment: string): Observation[] {
       if (AMBIGUITY.test(statusScope) || boundedQuantity) {
         return unresolved(field, clause, '原话给出的范围或取值尚不确定。', mandatory || boundedQuantity);
       }
+      const explicitComposition = field === 'fabric' && /\d[\d.]*\s*(?:%|％)|百分之[零一二两三四五六七八九十百\d]+|[一二两三四五六七八九]成/.test(statusScope);
+      const measuredFit = (field === 'easeAllowance' || field === 'lengthRatio') && /(?:\d|[一二两三四五六七八九十])\s*(?:公分|厘米|毫米|cm\b|mm\b)/i.test(statusScope);
+      if ((explicitComposition || measuredFit) && explicitlyRequired(prefix, suffix, statusScope)) {
+        return unresolved(field, clause, '原话要求核验具体数值，待人工补证。', true);
+      }
       const doubleCareNegative = field === 'care' && /(?:不要|拒绝|不接受|不能用)[^，,；;]{0,8}(?:不能|不可|不支持)\s*$/.test(prefix);
-      const excluded = !doubleCareNegative && (negativeChange || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(suffix));
+      const exclusiveCareExcluded = field === 'care' && /(?:不能|不要|拒绝|不接受|避开|不选|谢绝)(?:再)?(?:选|用|买|采用|接受|要)?(?:必须|只能|仅能|只可|仅可|仅限|只允许)\s*$/.test(prefix);
+      const excluded = !doubleCareNegative && (negativeChange || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(suffix) || exclusiveCareExcluded);
       const preferred = (PREFERENCE.test(prefix) || PREFERENCE.test(changeLead) || /偏(?:向)?\s*$/.test(prefix) ||
         /^(?:也可|亦可|即可|为佳|优先|就好|有(?:当然)?更好)/.test(suffix)) && !mandatory;
       const categoryOrder = field === 'category' && /(?:想|希望)要?定制/.test(prefix);
@@ -306,11 +356,17 @@ function readSegment(segment: string): Observation[] {
   return observations;
 }
 
-export function constraintsConflict(left: Constraint, right: Constraint): boolean {
-  return left.field === right.field && left.level === 'hard' && right.level === 'hard' && (
-    left.op === 'eq' && right.op === 'eq' && left.value !== right.value ||
+type ConstraintPredicate = Pick<Constraint, 'field' | 'op' | 'value'>;
+
+export function constraintPredicatesConflict(left: ConstraintPredicate, right: ConstraintPredicate): boolean {
+  return left.field === right.field && left.value !== null && right.value !== null && (
+    left.field !== 'craft' && left.op === 'eq' && right.op === 'eq' && left.value !== right.value ||
     left.op !== right.op && left.value === right.value
   );
+}
+
+export function constraintsConflict(left: Constraint, right: Constraint): boolean {
+  return left.level === 'hard' && right.level === 'hard' && constraintPredicatesConflict(left, right);
 }
 
 export function extractRevisionConstraints(turn: RequirementTurn): Constraint[] {
@@ -329,7 +385,8 @@ export function extractRevisionConstraints(turn: RequirementTurn): Constraint[] 
       items = items.filter(({ op, quote }) => op !== 'neq' || !/(?:不是|并非)(?:要|订|做)?/.test(quote ?? ''));
     }
     const withdrawalIndex = items.findLastIndex(isExplicitWithdrawal);
-    if (withdrawalIndex >= 0) {
+    const targetedCraftWithdrawals = field === 'craft' && withdrawalIndex >= 0 && Boolean(items[withdrawalIndex].withdraws);
+    if (withdrawalIndex >= 0 && !targetedCraftWithdrawals) {
       const after = items.slice(withdrawalIndex + 1);
       if (!after.some(({ value }) => value !== null)) return [items[withdrawalIndex]];
       items = after;
@@ -339,13 +396,16 @@ export function extractRevisionConstraints(turn: RequirementTurn): Constraint[] 
       ...items[0], id: `${turn.id}:${field}:conflict`, value: null, op: 'eq', level: 'pending', state: 'unknown',
       quote: turn.text.trim(), reason: '同一轮原话包含互相冲突的要求，需要人工确认。', blocking: true,
     } satisfies Constraint];
-    const pending = items.findLast(({ state }) => state === 'unknown');
-    const concrete = items.filter(({ value }) => value !== null);
+    const withdrawals = targetedCraftWithdrawals ? items.filter((item, index) => item.withdraws &&
+      !items.slice(index + 1).some((next) => next.op === item.withdraws!.op && next.value === item.withdraws!.value)) : [];
+    const pending = items.findLast((item) => item.state === 'unknown' && !isExplicitWithdrawal(item));
+    const concrete = items.filter((item, index) => item.value !== null && !items.slice(index + 1).some((next) =>
+      next.withdraws?.op === item.op && next.withdraws.value === item.value));
     const distinct = concrete.filter((item, index) => !concrete.slice(index + 1).some((other) =>
       other.op === item.op && other.value === item.value && (other.level === item.level || other.level === 'hard')))
       .filter((item) => item.level === 'hard' || !concrete.some((other) =>
         other.op === item.op && other.value === item.value && other.level === 'hard'));
-    return pending ? [...distinct, pending] : distinct;
+    return [...withdrawals, ...distinct, ...(pending ? [pending] : [])];
   });
 }
 

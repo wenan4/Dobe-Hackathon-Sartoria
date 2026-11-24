@@ -86,6 +86,14 @@ describe('decision preview and version snapshots', () => {
     expect(blocked.review[0]?.evidence.some((item) => item.field === 'color' && item.outcome === 'unknown')).toBe(true);
   });
 
+  it('holds a mixed feedback turn when a required change still needs clarification', () => {
+    const before = startConference();
+    const preview = previewDecisionRevision(before, '数量调整到五十套，裙长必须过膝。')!;
+    expect(preview.conflicts.some((item) => item.field === 'lengthRatio')).toBe(true);
+    expect(preview.branches.filter((branch) => branch.canConfirm).map((branch) => branch.option)).toEqual(['defer']);
+    expect(before.requirement.constraints.find((item) => item.field === 'quantity')?.value).toBe(60);
+  });
+
   it('applies two revisions while retaining untouched hard constraints and frozen visuals', () => {
     const v1 = startConference();
     const hard = v1.requirement.constraints.filter((constraint) => constraint.level === 'hard');

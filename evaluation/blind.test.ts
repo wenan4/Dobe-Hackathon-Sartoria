@@ -17,7 +17,7 @@ import {
 import { buildDecisionVersion, decisionInput, decisionPresentation } from '../src/engine/decisionVersion';
 import { buildLedgerRecordFromSession, loadLedgerRecords, saveLedgerRecords } from '../src/engine/ledgerStore';
 import { buildLocalDecisionRequirement } from '../src/engine/requirementInterview';
-import type { CandidateCombination, DecisionHistory, DecisionRequirement, Version } from '../src/types/decisions';
+import type { CandidateCombination, DecisionHistory, DecisionRequirement, MatchResult, Version } from '../src/types/decisions';
 import type {
   ConfigurationState, CraftAsset, DeconstructedRequirement, FabricAsset, FeasibilityNotice,
   PatternAsset, RequirementInput, SceneEnvironment, HistoricalCaseAsset,
@@ -25,10 +25,12 @@ import type {
 import { buildDecisionExport, buildDecisionMarkdown } from '../src/utils/decisionHandoff';
 import { fixtures, type CatalogExpectation, type Fixture, type FixtureTurn, type Triple } from './fixtures';
 import { holdout } from './holdout';
+import { HOLDOUT2_FIXTURES } from './holdout2';
 
 const BASELINE = '4e0d95921683fd04cf7834b754b02687d73d56a6';
 const FROZEN_SHA256 = '731df75840720f873ffd0846fbbaac0ebb7d0ca13716d8a42bb51f3d7239943a';
 const HOLDOUT_SHA256 = 'a053040ea829964de4bd6f62239aef063c89876dfb31ff8cb40677e3db0180f2';
+const HOLDOUT2_SHA256 = '3cb9a202d55270895d783c2a5705078dac778b8dc717a1f6e40fbf3d092791bc';
 const RUN_TIME = '2026-11-24T00:00:00.000Z';
 const gitArgs = ['-c', `safe.directory=${resolve('.').replaceAll('\\', '/')}`];
 
@@ -36,9 +38,17 @@ const releaseMode = (import.meta as ImportMeta & { env?: { MODE?: string } }).en
 const releaseSha = process.env.SARTORIA_RELEASE_SHA ?? (releaseMode
   ? execFileSync('git', [...gitArgs, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
   : undefined);
-const suite = releaseSha === undefined
-  ? { fixtures, source: 'fixtures.ts', hash: FROZEN_SHA256, report: 'report.json' }
-  : { fixtures: holdout, source: 'holdout.ts', hash: HOLDOUT_SHA256, report: `release-${releaseSha}.json` };
+const releaseSuites = [
+  { id: '1', fixtures: holdout, source: 'holdout.ts', hash: HOLDOUT_SHA256, report: `release-${releaseSha}.json` },
+  { id: '2', fixtures: HOLDOUT2_FIXTURES, source: 'holdout2.ts', hash: HOLDOUT2_SHA256, report: `release-2-${releaseSha}.json` },
+];
+const requestedSuite = process.env.SARTORIA_RELEASE_SUITE;
+if (releaseSha !== undefined && requestedSuite !== undefined && !releaseSuites.some(({ id }) => id === requestedSuite)) {
+  throw new Error('SARTORIA_RELEASE_SUITE must be 1 or 2.');
+}
+const suites = releaseSha === undefined
+  ? [{ id: 'historical', fixtures, source: 'fixtures.ts', hash: FROZEN_SHA256, report: 'report.json' }]
+  : releaseSuites.filter(({ id }) => requestedSuite === undefined || requestedSuite === id);
 
 function verifyReleaseSource(expectedSha: string) {
   expect(expectedSha).toMatch(/^[0-9a-f]{40}$/);
@@ -47,7 +57,7 @@ function verifyReleaseSource(expectedSha: string) {
   expect(pinned).toBe(expectedSha);
   const releaseInputs = [
     'src', 'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig*.json',
-    'evaluation/blind.test.ts', 'evaluation/fixtures.ts', 'evaluation/holdout.ts',
+    'evaluation/blind.test.ts', 'evaluation/fixtures.ts', 'evaluation/holdout.ts', 'evaluation/holdout2.ts',
   ];
   const differences = execFileSync('git', [...gitArgs, 'diff', '--name-only', expectedSha, '--', ...releaseInputs],
     { encoding: 'utf8' });
@@ -275,6 +285,17 @@ function catalogExpectation(expected: CatalogExpectation | undefined, offered: r
   ) ?? true);
 }
 
+function currentCatalogExpectation(
+  expected: CatalogExpectation | undefined,
+  match: MatchResult,
+  selected: CandidateCombination | null = null,
+) {
+  if (expected && match.status !== (expected.outcome === 'eligible' ? 'matched' : 'no_match')) return false;
+  const offered = [match.recommended, match.alternative, selected].filter((candidate): candidate is CandidateCombination =>
+    candidate?.status === 'eligible');
+  return catalogExpectation(expected, offered.map(({ config }) => config));
+}
+
 function claimSourceCount(requirement: DecisionRequirement) {
   return hard(requirement).filter((item) => item.quote && requirement.turns.some((turn) =>
     turn.id === item.sourceTurnId && turn.text.includes(item.quote!),
@@ -312,6 +333,7 @@ function scoreRevisions(fixture: Fixture, initial: Version) {
     turn: string; decision: string; preview: boolean; conflicts: boolean; patch: boolean; stored: boolean;
     invariant: boolean; preservedExistingHard: boolean; expectedState: boolean;
     roundTrip: boolean; archiveRoundTrip: boolean; reviewOnly: boolean; reason: string | null;
+    catalogOutcome: CatalogExpectation['outcome'] | null; catalog: boolean | null;
   }[] = [];
   let history = appendDecisionVersion(emptyDecisionHistory(), initial);
   const initiallySaveable = Boolean(initial.candidate);
@@ -394,7 +416,8 @@ function scoreRevisions(fixture: Fixture, initial: Version) {
     const roundTrip = archiveRoundTrip && initiallySaveable && Boolean(before.candidate && actual.candidate);
     rows.push({ turn: step.id, decision: revision.decision, preview: Boolean(preview && previewSafe), patch, conflicts,
       stored, invariant, preservedExistingHard, expectedState, roundTrip, archiveRoundTrip,
-      reviewOnly: !initial.candidate || !before.candidate || !actual.candidate, reason });
+      reviewOnly: !initial.candidate || !before.candidate || !actual.candidate, reason,
+      catalogOutcome: step.catalog?.outcome ?? null, catalog: currentCatalogExpectation(step.catalog, actual.match, actual.candidate) });
   }
   const stepsCorrect = rows.every(({ preview, patch, conflicts, stored, invariant, expectedState }) =>
     preview && patch && conflicts && stored && invariant && expectedState);
@@ -412,7 +435,7 @@ function sum(metrics: readonly { tp: number; fp: number; fn: number }[]) {
   }), { tp: 0, fp: 0, fn: 0 });
 }
 
-test('replays the frozen rule-only evaluation and prints auditable results', () => {
+test.each(suites)('replays $source and writes the evaluation report', (suite) => {
   if (releaseSha !== undefined) verifyReleaseSource(releaseSha);
   const frozenText = readFileSync(resolve('evaluation', suite.source), 'utf8').replaceAll('\r\n', '\n');
   expect(createHash('sha256').update(frozenText).digest('hex')).toBe(suite.hash);
@@ -472,8 +495,7 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
           knownViolation: [...new Set(newAudit.flatMap((item) => item.violations))],
           unverifiedHard: [...new Set(newAudit.flatMap((item) => item.unknowns))],
           fakeClaim: newAudit.some((item) => item.fakeClaim),
-          catalog: catalogExpected && matching.status !== (catalogExpected.outcome === 'eligible' ? 'matched' : 'no_match')
-            ? false : catalogExpectation(catalogExpected, candidates.map(({ config }) => config)),
+          catalog: currentCatalogExpectation(catalogExpected, matching),
           matching: matching.status, audit: newAudit, missingFollowUps: unclear, questionCount: requirement.questions.length,
           unresolvedOverwrites: unresolvedOverwrites.map(({ field }) => field) },
         revision,
@@ -499,11 +521,13 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
       { field: 'care', op: 'eq', value: 'machine_wash' }, { field: 'style', op: 'neq', value: 'traditional_uniform' },
     ];
     function catalogChecks(outcome: CatalogExpectation['outcome']) {
-      const probes = rows.filter(({ catalogOutcome }) => catalogOutcome === outcome);
-      return { passed: probes.filter(({ current }) => current.catalog === true).length, total: probes.length };
+      const probes = rows.flatMap(({ catalogOutcome, current, revision }) => [
+        { catalogOutcome, catalog: current.catalog }, ...revision?.rows ?? [],
+      ]).filter((probe) => probe.catalogOutcome === outcome);
+      return { passed: probes.filter(({ catalog }) => catalog === true).length, total: probes.length };
     }
     const report = {
-      baseline: BASELINE, productionSha: releaseSha ?? null, fixtureFile: suite.source,
+      baseline: BASELINE, productionSha: releaseSha ?? null, suite: suite.id, fixtureFile: suite.source,
       fixtureSha256: suite.hash, old: totals('old'), current: totals('current'),
       sourceQuotes: rows.reduce((count, row) => count + row.current.quoteCount, 0),
       sourceQuoteTotal: rows.reduce((count, row) => count + row.current.hardClaimCount, 0),
@@ -546,15 +570,15 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
         report.catalogChecks.eligible.passed === report.catalogChecks.eligible.total,
       noMatchCatalogProbes: report.catalogChecks.noMatch.total > 0 &&
         report.catalogChecks.noMatch.passed === report.catalogChecks.noMatch.total,
-      conflictCatalogProbes: report.catalogChecks.blocked.total > 0 &&
-        report.catalogChecks.blocked.passed === report.catalogChecks.blocked.total,
+      conflictCatalogProbes: report.catalogChecks.blocked.total === 0
+        ? null : report.catalogChecks.blocked.passed === report.catalogChecks.blocked.total,
       quoteSourceTracing: report.sourceQuoteTotal > 0 && report.sourceQuotes === report.sourceQuoteTotal,
     };
     const output = resolve('node_modules/.cache/sartoria-baseline', suite.report);
     writeFileSync(output, JSON.stringify({ ...report, gates }, null, 2));
     console.log(JSON.stringify({ ...report, gates, rows: undefined, fullReport: output }, null, 2));
     if (gates) {
-      const failures = Object.entries(gates).filter(([, passed]) => !passed).map(([gate]) => gate);
+      const failures = Object.entries(gates).filter(([, passed]) => passed === false).map(([gate]) => gate);
       expect(failures, `Release report: ${output}`).toEqual([]);
     }
   } finally {

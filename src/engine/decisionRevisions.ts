@@ -14,7 +14,10 @@ import type {
 } from '../types/decisions';
 import type { RequirementInput } from '../types/sartoria';
 import { evaluateDecisionConfiguration, matchDecision } from './decisionMatching';
-import { buildClarificationQuestions, buildLocalDecisionRequirement, extractRevisionConstraints, isExplicitWithdrawal } from './requirementInterview';
+import {
+  buildClarificationQuestions, buildLocalDecisionRequirement, constraintPredicatesConflict as conflictsWith,
+  extractRevisionConstraints, isExplicitWithdrawal,
+} from './requirementInterview';
 
 export interface RevisionConflict {
   field: ConstraintField;
@@ -61,12 +64,6 @@ export function findConstraintChanges(previous: Constraint[], next: Constraint[]
 
 function sameMeaning(a: Constraint, b: Constraint): boolean {
   return a.field === b.field && a.op === b.op && a.value === b.value && a.level === b.level && a.state === b.state;
-}
-
-function conflictsWith(a: Constraint, b: Constraint): boolean {
-  if (a.field !== b.field || a.value === null || b.value === null) return false;
-  if (a.op === b.op) return a.op === 'eq' && a.value !== b.value;
-  return a.value === b.value;
 }
 
 function targetsWithdrawal(withdrawal: Constraint, existing: Constraint): boolean {

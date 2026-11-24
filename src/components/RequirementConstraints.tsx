@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describeRequirementValue, isRequirementValue, requirementFields } from '../engine/requirementInterview';
+import { constraintPredicatesConflict, describeRequirementValue, isRequirementValue, requirementFields } from '../engine/requirementInterview';
 import type { Constraint, DecisionRequirement } from '../types/decisions';
 import './RequirementConstraints.css';
 
@@ -98,7 +98,7 @@ export function RequirementConstraints({ requirement, onEdit }: RequirementConst
       if (constraint.id === item.id) return [item];
       if (constraint.field === item.field && (
         item.state === 'unknown' || constraint.state === 'unknown' ||
-        constraint.op === 'eq' && item.op === 'eq' ||
+        constraintPredicatesConflict(constraint, item) ||
         constraint.value === item.value
       )) return [];
       return [constraint];

@@ -130,6 +130,54 @@ describe('the offline requirement interview', () => {
     ]);
   });
 
+  it('normalizes trailing exclusions and rejects a care method when it is the only allowed care', () => {
+    const result = extractRevisionConstraints({ id: 'polarity', text: '深蓝也绝对不用，羊毛一律不考虑，不要采用仅能干洗的布料。' });
+    expect(result).toMatchObject([
+      { field: 'fabric', value: 'wool', op: 'neq', level: 'hard' },
+      { field: 'color', value: 'navy', op: 'neq', level: 'hard' },
+      { field: 'care', value: 'dry_clean', op: 'neq', level: 'hard' },
+    ]);
+  });
+
+  it('separates named craft, collar wording, structure and fabric feel from standalone garment specifications', () => {
+    const result = extractRevisionConstraints({
+      id: 'catalog-names',
+      text: '领口采用西服尖驳领，版型采用两件式结构。工艺指定撞色真丝滚边与高活动量袖口工艺，另一项工艺用 SFG-CR-001。布料像羊毛一样柔和。',
+    });
+    expect(result).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'collar', value: 'lapel' }),
+      expect.objectContaining({ field: 'patternStructure', value: 'two_piece' }),
+      expect.objectContaining({ field: 'craft', value: 'crf-contrast-piping-cuff' }),
+      expect.objectContaining({ field: 'craft', value: 'crf-haipai-pipa-button' }),
+    ]));
+    expect(result.some(({ field }) => field === 'category' || field === 'fabric')).toBe(false);
+    expect(result.some(({ blocking }) => blocking)).toBe(false);
+  });
+
+  it('blocks unsupported explicit values and composition while leaving uncertain preferences open', () => {
+    const result = extractRevisionConstraints({
+      id: 'unlisted-details', text: '色调锁定烟紫色。布料必须含65%羊毛，袖窿放量至少五厘米，光泽希望像釉面。',
+    });
+    expect(result.filter(({ blocking }) => blocking).map(({ field }) => field)).toEqual(['fabric', 'color', 'easeAllowance']);
+    expect(result.some(({ field, value }) => field === 'fabric' && value === 'wool')).toBe(false);
+  });
+
+  it('keeps the proposed replacement while withholding an explicitly unapproved withdrawal', () => {
+    const result = extractRevisionConstraints({
+      id: 'unapproved', text: '有提议改成手洗。原先的机洗要求尚未批准取消，继续问客户。',
+    });
+    expect(result).toMatchObject([{ field: 'care', value: 'hand_wash', state: 'explicit' }]);
+    expect(result.some(isExplicitWithdrawal)).toBe(false);
+  });
+
+  it('replaces only the named craft predicate when changing one item in a craft package', () => {
+    const result = extractRevisionConstraints({ id: 'craft-replacement', text: '把手工琵琶盘扣换成缎纹稳缝，其他照旧。' });
+    expect(result).toMatchObject([
+      { field: 'craft', state: 'unknown', withdraws: { op: 'eq', value: 'crf-haipai-pipa-button' } },
+      { field: 'craft', state: 'explicit', op: 'eq', value: 'crf-demo-washable-satin-seams' },
+    ]);
+  });
+
   it('handles compact workplace phrasing and coordinated exclusions without reversing polarity', () => {
     const observations = extractRevisionConstraints({
       id: 'workplace',
