@@ -28,6 +28,7 @@ import { holdout } from './holdout';
 import { HOLDOUT2_FIXTURES } from './holdout2';
 import { HOLDOUT3_FIXTURES } from './holdout3';
 import { freeTextFixtures } from './freeText20261124';
+import { postRepairFixtures } from './postRepairBlind';
 
 const BASELINE = '4e0d95921683fd04cf7834b754b02687d73d56a6';
 const FROZEN_SHA256 = '731df75840720f873ffd0846fbbaac0ebb7d0ca13716d8a42bb51f3d7239943a';
@@ -35,6 +36,7 @@ const HOLDOUT_SHA256 = 'a053040ea829964de4bd6f62239aef063c89876dfb31ff8cb40677e3
 const HOLDOUT2_SHA256 = '3cb9a202d55270895d783c2a5705078dac778b8dc717a1f6e40fbf3d092791bc';
 const HOLDOUT3_SHA256 = '87975f8f6146c78f54fcb85594ef10b787c1127a5b0d5bc322522de6c59f27b9';
 const FREE_TEXT_SHA256 = 'c9144cd09a54ec7ffd43c91180ab29fdaeabb54c83169fe33dfd019eb4660916';
+const POST_REPAIR_SHA256 = 'd87bf1751d2d9d5d15b1a395aa74564d1fc6ba4952767732f203721959c888e2';
 const RUN_TIME = '2026-11-24T00:00:00.000Z';
 const gitArgs = ['-c', `safe.directory=${resolve('.').replaceAll('\\', '/')}`];
 
@@ -51,10 +53,12 @@ const releaseSuites = [
     assumeNoConflictsWhenOmitted: false },
   { id: '4', fixtures: freeTextFixtures, source: 'freeText20261124.ts', hash: FREE_TEXT_SHA256, report: `release-4-${releaseSha}.json`,
     assumeNoConflictsWhenOmitted: false },
+  { id: '5', fixtures: postRepairFixtures, source: 'postRepairBlind.ts', hash: POST_REPAIR_SHA256, report: `release-5-${releaseSha}.json`,
+    assumeNoConflictsWhenOmitted: false },
 ];
 const requestedSuite = process.env.SARTORIA_RELEASE_SUITE;
 if (releaseSha !== undefined && requestedSuite !== undefined && !releaseSuites.some(({ id }) => id === requestedSuite)) {
-  throw new Error('SARTORIA_RELEASE_SUITE must be 1, 2, 3, or 4.');
+  throw new Error(`SARTORIA_RELEASE_SUITE must be one of ${releaseSuites.map(({ id }) => id).join(', ')}.`);
 }
 const suites = releaseSha === undefined
   ? [{ id: 'historical', fixtures, source: 'fixtures.ts', hash: FROZEN_SHA256, report: 'report.json',
@@ -596,7 +600,7 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
         : null;
       return {
         id: fixture.id, group: fixture.group, catalogOutcome: catalogExpected?.outcome ?? null,
-        ...(suite.id === '4' ? { formatting: probeFormatting(fixture, catalog, requirement, matching) } : {}),
+        ...(suite.id === '4' || suite.id === '5' ? { formatting: probeFormatting(fixture, catalog, requirement, matching) } : {}),
         old: { score: oldScore, equivalentScore: oldEquivalent, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), old.triples.filter((item) => item.op === 'neq')),
           manual: manualEffort(oldScore, old.ambiguous), unknownId: oldAudit.unknownId, knownViolation: oldUnwarned,
           fakeClaim: preferred && oldAudit.violations.includes('craftCompatibility'),

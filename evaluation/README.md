@@ -14,7 +14,9 @@
 
 11 月 24 日的后续自由文本复验使用第四批新样本，产品固定为 `2683959`。三名独立作者依据共享类型和静态目录标注 24 条委托、36 轮消息。先冻结标签，再将原消息用于已有的放行评分。另外把每条首轮消息的标点改成换行或空格，记录硬约束、候选和违约变化。这 48 次排版扰动仅用于敏感性分析。
 
-`npm run test:release` 逐批运行四组冻结验收，每组 24 条。命令核对候选版本并生成报告，任一放行断言失败即返回非零状态。将 `SARTORIA_RELEASE_SUITE` 设为 `1`、`2`、`3` 或 `4` 可单独复跑。设置 `SARTORIA_RELEASE_SHA` 可核验指定提交，当前源码、评分代码、样本和运行配置须与该提交一致。报告写入 `node_modules/.cache/sartoria-baseline/`，首批为 `release-<SHA>.json`，其余为 `release-<批号>-<SHA>.json`。
+第五批复验固定 [PR #5](https://github.com/zicheng-yu/Dobe-Hackathon-Sartoria/pull/5) 的产品提交 `51a8295`。独立作者只参考字段合同和静态目录，重新编写 24 条委托、36 轮消息，在运行产品前冻结预期。沿用第四批的门槛及首轮排版扰动。复核这一成绩需要检出同时包含该产品和第五批评测的版本。
+
+`npm run test:release` 逐批运行五组冻结验收，每组 24 条。命令核对候选版本并生成报告，任一放行断言失败即返回非零状态。将 `SARTORIA_RELEASE_SUITE` 设为 `1` 至 `5` 可单独复跑。设置 `SARTORIA_RELEASE_SHA` 可核验指定提交，当前源码、评分代码、样本和运行配置须与该提交一致。报告写入 `node_modules/.cache/sartoria-baseline/`，首批为 `release-<SHA>.json`，其余为 `release-<批号>-<SHA>.json`。
 
 在仓库根目录使用 Node.js 24，安装锁定依赖后运行 `npm exec -- vitest run evaluation/blind.test.ts`。记录评测时新版本 SHA 和冻结样本哈希。断开模型路径并清空项目历史，按相同原文和顺序分别运行纯本地基线与新版本。
 
