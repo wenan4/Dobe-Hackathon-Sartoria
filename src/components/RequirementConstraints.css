@@ -20,9 +20,10 @@
 }
 
 .constraint-group {
-  padding: 12px;
-  border: 1px solid var(--border-medium);
-  border-radius: 12px;
+  padding: 14px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
   overflow-wrap: anywhere;
 }
 
@@ -34,7 +35,7 @@
 }
 
 .constraint-group h3 { display: flex; align-items: center; gap: 8px; }
-.constraint-item { border-top: 1px solid var(--border-medium); padding: 10px 0; }
+.constraint-item { border-top: 1px solid var(--border-hairline); padding: 10px 0; }
 .constraint-item:last-child { padding-bottom: 0; }
 .constraint-item-head { font-size: 13px; font-weight: 600; }
 .constraint-panel .btn-outline, .constraint-panel .btn-black { font-size: 12px; padding: 5px 10px; }
