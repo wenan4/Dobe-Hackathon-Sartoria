@@ -192,6 +192,47 @@ describe('color references in the requirement and catalog flow', () => {
     ]);
   });
 
+  it('records a direct first-person color selection with the customer’s words', () => {
+    for (const [quote, value] of [['颜色我想要灰色', 'stone_gray'], ['这件的配色我们想要藏青色', 'navy']]) {
+      const input = brief('private_couture', `想订一件外套。照片里的酒红色很好看，只参考它的领子。${quote}。`);
+      const requirement = refreshDecisionRequirement(input);
+      expect(requirement.constraints.filter(({ field }) => field === 'color')).toMatchObject([
+        { level: 'hard', op: 'eq', value, quote, sourceTurnId: requirement.turns[0].id },
+      ]);
+    }
+
+    const quote = '本单颜色我想要紫色';
+    const unmapped = refreshDecisionRequirement(brief('private_couture', quote));
+    expect(unmapped.constraints).toContainEqual(expect.objectContaining({
+      field: 'color', level: 'pending', value: null, blocking: true, quote,
+    }));
+  });
+
+  it('keeps first-person color wording soft or open when selection is qualified', () => {
+    const readColors = (text: string) => refreshDecisionRequirement(brief('private_couture', text))
+      .constraints.filter(({ field }) => field === 'color');
+    expect(readColors('我想要灰色')).toMatchObject([{ value: 'stone_gray', level: 'preference' }]);
+    expect(readColors('颜色我更想要灰色')).toMatchObject([{ value: 'stone_gray', level: 'preference' }]);
+    expect(readColors('颜色我想要藏青或者暖灰')).toMatchObject([{ value: null, level: 'pending' }]);
+    expect(readColors('若负责人签字，颜色我想要藏青')).toMatchObject([{ value: null, level: 'pending' }]);
+    for (const quote of ['颜色我想要藏青，前提是负责人签字', '颜色我想要灰色。不过还得领导拍板', '颜色我想要藏青。还得领导拍板',
+      '颜色我想要紫色。不过颜色还得等领导确认']) {
+      const colors = readColors(quote);
+      expect(colors).toMatchObject([{ value: null, level: 'pending', state: 'unknown', quote }]);
+      expect(colors[0].blocking).toBeFalsy();
+    }
+    expect(readColors('颜色我想要藏青。不过面料还得领导拍板')).toMatchObject([{ value: 'navy', level: 'hard' }]);
+    expect(readColors('颜色我想要藏青。不过还得领导确认面料')).toMatchObject([{ value: 'navy', level: 'hard' }]);
+    expect(readColors('颜色我想要藏青。不过面料还没定')).toMatchObject([{ value: 'navy', level: 'hard' }]);
+    for (const text of ['颜色我想要藏青，预算不够的话再改', '颜色我想要藏青，或者暖灰也行',
+      '颜色我想要藏青，但暖灰也可以', '颜色我想要藏青，但也可暖灰',
+      '颜色我想要藏青，这只是偏好', '颜色我想要藏青。只是初步考虑', '颜色我想要藏青，暂作参考', '颜色我想要藏青，颜色还没定',
+      '颜色我想要藏青？', '对方说，颜色我想要藏青', '版师说：「她只改腰线，颜色我想要藏青，领口保持。」',
+      '颜色我想要用照片里的藏青']) {
+      expect(readColors(text).some(({ level, blocking }) => level === 'hard' || blocking), text).toBe(false);
+    }
+  });
+
   it('preserves color confirmed in a saved revision when later feedback is conditional', () => {
     const requirement = refreshDecisionRequirement(showroomSuits);
     const match = matchDecision(requirement);

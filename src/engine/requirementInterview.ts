@@ -2,7 +2,10 @@ import { CRAFTS } from '../data/crafts';
 import { FABRICS } from '../data/fabrics';
 import { SCENES, sceneFits } from '../data/scenes';
 import { activeOrderClauses, PAIRED_REJECTION, REJECTION_PREDICATE, splitRequirementClauses, type RequirementClause } from './requirementClauses';
-import { CHOOSE_COLOR, colorConditionBefore, colorRequestPrefix, isUnsettledColor, REFERENCE_IMAGE, reportsColorQuestion, UNMAPPED_COLOR } from './requirementColorScope';
+import {
+  CHOOSE_COLOR, colorConditionBefore, colorRequestPrefix, directColorChoiceContinuation, isDirectColorChoice,
+  isUnsettledColor, REFERENCE_IMAGE, reportsColorQuestion, UNMAPPED_COLOR,
+} from './requirementColorScope';
 import { unmappedGarmentTerm } from './unmappedGarment';
 import { excludesVenue, namesStageSubject, stageLocations } from './stageLocation';
 import { GARMENT_AFTER_CLASSIFIER, matchOrderQuantities, matchPerPersonQuantity, parseFormQuantity } from './requirementQuantity';
@@ -272,6 +275,10 @@ function patternsFor(field: ConstraintField, segment: string, inheritsStage = fa
   return matches;
 }
 
+function namesColor(text: string): boolean {
+  return UNMAPPED_COLOR.test(text) || patternsFor('color', text).length > 0;
+}
+
 function unresolved(field: ConstraintField, quote: string, reason: string, blocking = false): Observation {
   return { field, op: 'eq', value: null, level: 'pending', quote, reason, ...(blocking ? { blocking: true } : {}) };
 }
@@ -415,7 +422,8 @@ function reportedSwap(directive: string, inheritsStage: boolean): RegExpExecArra
     replacement.some((group) => group.field === field && group.matches.some(({ start }) => start === 0))) ? swap : null;
 }
 
-function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision', inheritsStage = false, nextCancelsProposal = false, colorCondition = ''): Observation[] {
+function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision', inheritsStage = false,
+  nextCancelsProposal = false, colorCondition = '', colorContinuation: string | null = null): Observation[] {
   const untouched = /(?:其余|其他|其它|剩下(?:的)?).*$/.exec(segment);
   let clause = untouched && PROTECTED.test(untouched[0]) ? segment.slice(0, untouched.index).trim() : segment;
   const priorIntent = HISTORICAL_INTENT.exec(clause);
@@ -448,6 +456,7 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
   const wrappedChange = change && /^(?:把|将).{1,16}$/.test(changeLead);
   if (question && (EVIDENCE_DOCUMENT.test(directive) || !newRequirement && !wrappedChange && !PROPOSED_ACTION.test(action))) return [];
   const proposal = Boolean(question) || canceledProposal || PREFERENCE.test(changeLead) || TENTATIVE_CHANGE.test(changeLead);
+  const canSelectColor = colorContinuation !== null && clause === segment && !proposal && !change;
   const negativeChange = /(?:不要|不能|不得|不许|别|不)(?:再)?(?:(?:把|将|从).{0,12})?$/.test(changeLead);
   const offset = change ? change.index + change[0].length : 0;
   const target = directive.slice(offset);
@@ -482,16 +491,21 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
       })));
     }
     if (!matches.length && mention) {
-      const { prefix, trailing, statusScope } = nearbyLanguage(target, { field, start: mention.index, end: mention.index + mention[0].length }, anchors);
+      const start = mention.index;
+      const end = start + mention[0].length;
+      const { prefix, trailing, statusScope } = nearbyLanguage(target, { field, start, end }, anchors);
       const colorPrefix = (change?.[0] ?? '') + prefix;
       const authority = field === 'color' ? colorRequestPrefix(colorPrefix, trailing, referenceOnly, FORBIDDEN_AFTER.test(trailing)) : prefix;
       if (authority === null || field === 'color' && reportsColorQuestion(colorPrefix)) continue;
+      const directColorChoice = field === 'color' && unmapped && canSelectColor && isDirectColorChoice(target, start, end);
+      const continuation = directColorChoice ? colorContinuation ?? '' : '';
       if (WITHDRAWAL.test(statusScope)) observations.push(unresolved(field, clause, WITHDRAWAL_REASON));
       else if (REFERENCE_ONLY.test(statusScope)) observations.push(unresolved(field, clause, REFERENCE_REASON));
-      else if (field === 'color' && unmapped && isUnsettledColor(clause, changeLead + colorPrefix, trailing, Boolean(colorCondition), false)) {
-        observations.push(unresolved(field, colorQuote, PENDING_COLOR_REASON));
+      else if (field === 'color' && unmapped && (continuation ||
+        isUnsettledColor(clause, changeLead + colorPrefix, trailing, Boolean(colorCondition), false))) {
+        observations.push(unresolved(field, colorQuote + continuation, PENDING_COLOR_REASON));
       } else if (isUnsettled(statusScope)) observations.push(unresolved(field, clause, UNSETTLED_REASON, !OPEN_QUESTION.test(statusScope) && MANDATORY.test(statusScope)));
-      else if (explicitlyRequired(authority, trailing, statusScope) || unmapped && !question && !proposal &&
+      else if (directColorChoice || explicitlyRequired(authority, trailing, statusScope) || unmapped && !question && !proposal &&
         !PREFERENCE.test(statusScope) && !PERMITTED_BEFORE.test(prefix) && !PERMITTED_AFTER.test(trailing) &&
         (field !== 'color' || CHOOSE_COLOR.test(authority) || !trailing && (!authority.trim() || /^(?:颜色|色系|配色|主色)$/.test(authority)))) {
         observations.push(unresolved(field, clause, '原话包含目录规则暂不能归一化的要求。', true));
@@ -512,8 +526,10 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
       const proposedApproval = PROPOSES_CONFIRMATION.test(beforeApproval);
       const confirmed = Boolean(approval) && !confirmationPending && !proposedApproval || CONFIRMED_AFTER.test(trailing);
       const tried = SAMPLE_BEFORE.test(prefix) || SAMPLE_AFTER.test(trailing);
-      if (field === 'color' && isUnsettledColor(clause, changeLead + colorPrefix, trailing, Boolean(colorCondition), confirmed)) {
-        return unresolved(field, colorQuote, PENDING_COLOR_REASON);
+      const directColorChoice = field === 'color' && canSelectColor && isDirectColorChoice(target, start, end);
+      const continuation = directColorChoice ? colorContinuation ?? '' : '';
+      if (field === 'color' && (continuation || isUnsettledColor(clause, changeLead + colorPrefix, trailing, Boolean(colorCondition), confirmed))) {
+        return unresolved(field, colorQuote + continuation, PENDING_COLOR_REASON);
       }
       if (!confirmed && (REFERENCE_ONLY.test(statusScope) || tried && !FORBIDDEN_AFTER.test(trailing))) {
         return unresolved(field, clause, REFERENCE_REASON);
@@ -540,7 +556,7 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
       const excluded = !doubleCareNegative && (negativeChange || NEGATION.test(prefix) || field === 'scene' && excludesVenue(prefix) || FORBIDDEN_AFTER.test(trailing) ||
         field === 'color' && prefix !== context && /不(?:按|照)(?:着)?\s*$/.test(prefix) ||
         Boolean(trailingPreference?.[1]) || exclusiveCareExcluded);
-      const preferred = PREFERENCE.test(prefix) || proposal || proposedApproval || /偏(?:向)?\s*$/.test(prefix) || trailingPreference !== null;
+      const preferred = !directColorChoice && PREFERENCE.test(prefix) || proposal || proposedApproval || /偏(?:向)?\s*$/.test(prefix) || trailingPreference !== null;
       if (mode === 'initial' && permitted && !preferred && !mandatory && !excluded) {
         return unresolved(field, clause, REFERENCE_REASON);
       }
@@ -550,7 +566,7 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
       const level = !mandatory && ((preferred || permitted) && !(orderField && directOrder && !proposal) ||
         (!change && field === 'luster' && /更亮|亮一点|亮一些/.test(statusScope)))
         ? 'preference' : 'hard';
-      const explicitColorChoice = field === 'color' && CHOOSE_COLOR.test(prefix);
+      const explicitColorChoice = field === 'color' && (directColorChoice || CHOOSE_COLOR.test(prefix));
       return { field, ...predicateFor(field, value, excluded), level, reason: null, quote: clause,
         ...((confirmed || explicitColorChoice) && level === 'hard' && !excluded ? { resolvesPending: true } : {}),
       };
@@ -584,6 +600,7 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
 }
 
 const NAMED_REJECTION = new RegExp(`^(?:(?:前面|上面|刚(?:才)?|先前|此前|之前)(?:提到|提过|提|说到|说过|说|选过|选|看过)|前述|上述)(?:的)?\\s*(?:[这那](?:个|项|种|条|款))?\\s*([\\p{Script=Han}]{1,6})\\s*${REJECTION_PREDICATE}`, 'u');
+const OTHER_ORDER = /(?:另(?:一|一笔|一个)|其他|其它|别的|上(?:一)?|前一|下一|旧)(?:单|订单|工单|件)/u;
 const referenceLabels: Partial<Record<ConstraintField, RegExp>> = {
   color: /^(?:颜色|配色|色彩|色调|主色)$/, fabric: /^(?:布料|材质|用料)$/, collar: /^(?:领型|领口|领子)$/,
   care: /^(?:洗护方式|洗标|清洗方式)$/, season: /^季节$/, lengthRatio: /^(?:衣长|裙长)$/,
@@ -611,19 +628,43 @@ function readNamedExclusion(text: string, clauses: RequirementClause[], currentI
   const field = requirementFieldIds.find((id) => requirementFields[id].label === label || referenceLabels[id]?.test(label));
   if (!field) return [];
 
+  const start = field === 'color' ? currentIndex + 1 - activeOrderClauses(clauses.slice(0, currentIndex + 1)).length : 0;
   let sentenceBoundaries = 0;
   let source: { index: number; value: FieldMatch['value']; level: Observation['level'] } | undefined;
-  for (let index = currentIndex - 1; index >= 0; index--) {
+  let unlistedColorIndex: number | undefined;
+  let unlistedColorMentions = 0;
+  let hasCatalogColor = false;
+  for (let index = currentIndex - 1; index >= start; index--) {
     const previous = clauses[index];
     const boundary = text.slice(previous.end, clauses[index + 1].start);
     if (!/^[\s，,；;。！？!?]+$/u.test(boundary) || /\r?\n[ \t]*\r?\n/u.test(boundary)) break;
     if (/[。！？!?\n]/u.test(boundary) && ++sentenceBoundaries > 1) break;
-    const condition = colorConditionBefore(text, clauses[index - 1], previous);
-    for (const { field: candidateField, op, value, level } of readSegment(previous.text, mode, false, false, condition)) {
+    if (field === 'color' && (HISTORICAL_LEAD.test(previous.text) || HISTORICAL_ORDER.test(previous.text) ||
+      OTHER_ORDER.test(previous.text))) break;
+    const beforePrevious = clauses[index - 1];
+    const condition = colorConditionBefore(text, beforePrevious, previous);
+    const continuation = directColorChoiceContinuation(text, beforePrevious, previous, clauses[index + 1], namesColor);
+    const observations = readSegment(previous.text, mode, false, false, condition, continuation);
+    if (field === 'color') {
+      const catalog = patternsFor('color', previous.text);
+      hasCatalogColor ||= catalog.length > 0;
+      for (const mention of previous.text.matchAll(new RegExp(UNMAPPED_COLOR.source, 'gu'))) {
+        if (catalog.some(({ start, end }) => start < mention.index + mention[0].length && end > mention.index)) continue;
+        unlistedColorMentions++;
+        if (observations.some((item) => item.field === 'color' && item.value === null && item.reason !== WITHDRAWAL_REASON) ||
+          HISTORICAL_INTENT.test(previous.text.slice(0, mention.index))) unlistedColorIndex = index;
+      }
+    }
+    for (const { field: candidateField, op, value, level } of observations) {
       if (candidateField !== field || op !== 'eq' || value === null) continue;
       if (source && source.value !== value) return [];
       source ??= { index, value, level };
     }
+  }
+  if (unlistedColorIndex !== undefined) {
+    if (unlistedColorMentions !== 1 || hasCatalogColor) return [];
+    return [{ observation: unresolved(field, text.slice(clauses[unlistedColorIndex].start, current.end),
+      '原话排除的颜色暂不能归一化，需要人工核对。', true) }];
   }
   if (!source) return [];
   const { index, value, level } = source;
@@ -631,6 +672,27 @@ function readNamedExclusion(text: string, clauses: RequirementClause[], currentI
     observation: { field, ...predicateFor(field, value, true), level: 'hard', reason: null, quote: text.slice(clauses[index].start, current.end) },
     ...(level === 'preference' ? { supersedes: { clauseIndex: index, value } } : {}),
   }];
+}
+
+// A neighboring color reference is supporting evidence, independent of the request that blocks matching.
+function withAdjacentColorReference(text: string, clauses: RequirementClause[], blocker: string, open: Constraint[]): string {
+  const references = open.filter((item) => item.reason === REFERENCE_REASON && item.quote);
+  if (!references.length || OTHER_ORDER.test(blocker) || !UNMAPPED_COLOR.test(blocker) || patternsFor('color', blocker).length) return blocker;
+  const active = activeOrderClauses(clauses);
+  const index = active.findIndex((clause) => clause.text === blocker);
+  if (index < 0 || clauses.filter((clause) => clause.text === blocker).length !== 1) return blocker;
+
+  const current = active[index];
+  for (const neighbor of [active[index - 1], active[index + 1]]) {
+    if (!neighbor || !references.some((item) => item.quote === neighbor.text) ||
+      OTHER_ORDER.test(neighbor.text) || !namesColor(neighbor.text) ||
+      !/(?:可(?:以)?(?:先)?参考|(?:只|仅)(?:供|作(?:为)?|当作)?参考)/u.test(neighbor.text)) continue;
+    const [first, last] = neighbor.start < current.start ? [neighbor, current] : [current, neighbor];
+    if (/^[，,；;。 \t]+$/u.test(text.slice(first.end, last.start)) && clauses.filter((clause) => clause.text === neighbor.text).length === 1) {
+      return text.slice(first.start, last.end);
+    }
+  }
+  return blocker;
 }
 
 type ConstraintPredicate = Pick<Constraint, 'field' | 'op' | 'value'>;
@@ -685,14 +747,15 @@ export function extractRevisionConstraints(turn: RequirementTurn, mode: 'initial
     const hasSubject = namesStageSubject(clause.text);
     const continuesStage = stageStart !== null && !hasSubject && stageLocations(clause.text, true).length > 0;
     const colorCondition = colorConditionBefore(turn.text, previous, clause);
-    const found = readSegment(clause.text, mode, continuesStage, nextCancelsProposal, colorCondition).filter((item) =>
+    const colorContinuation = directColorChoiceContinuation(turn.text, previous, clause, next, namesColor);
+    const found = readSegment(clause.text, mode, continuesStage, nextCancelsProposal, colorCondition, colorContinuation).filter((item) =>
       !(item.value === null && references[index].some(({ observation }) => observation.field === item.field)) &&
       (item.reason !== REFERENCE_REASON || !references[index + 1]?.some(({ observation }) => observation.field === item.field)) &&
       !(item.level === 'preference' && item.op === 'eq' && supersededPreferences.some(({ observation, supersedes }) =>
         observation.field === item.field && supersedes?.clauseIndex === index && supersedes.value === item.value)));
     const tentativeColor = found.find(({ field, reason }) => field === 'color' && reason === PENDING_COLOR_REASON);
     if (tentativeColor && next && /^[，,；; \t]+$/u.test(turn.text.slice(clause.end, next.start)) &&
-      fieldMentions.color?.test(next.text) && isUnsettled(next.text) && !patternsFor('color', next.text).length && !UNMAPPED_COLOR.test(next.text)) {
+      fieldMentions.color?.test(next.text) && isUnsettled(next.text) && !namesColor(next.text)) {
       const start = tentativeColor.quote?.startsWith(colorCondition) ? clause.start - colorCondition.length : clause.start;
       if (tentativeColor.quote === turn.text.slice(start, clause.end)) tentativeColor.quote = turn.text.slice(start, next.end);
     }
@@ -767,6 +830,8 @@ export function extractRevisionConstraints(turn: RequirementTurn, mode: 'initial
         const start = turn.text.indexOf(firstQuote, clauses[0].start);
         const end = turn.text.lastIndexOf(lastQuote) + lastQuote.length;
         pending = { ...pending, quote: turn.text.slice(start, end) };
+      } else if (pending && blockers.length === 1 && firstQuote) {
+        pending = { ...pending, quote: withAdjacentColorReference(turn.text, clauses, firstQuote, open) };
       }
     }
     const distinct = concrete.filter((item, index) => !concrete.slice(index + 1).some((other) =>

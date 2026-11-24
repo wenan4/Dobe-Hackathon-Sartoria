@@ -101,6 +101,28 @@ describe('requirement stance and scope', () => {
     ]);
   });
 
+  it('preserves an adjacent color reference alongside an unlisted procurement exclusion', () => {
+    const reference = '颜色可以参考蓝色';
+    const exclusion = '采购时不要买红色面料';
+    const quote = `${reference}。${exclusion}`;
+    const [review] = read(`${exclusion}。`, 'initial');
+    expect(review).toMatchObject({ field: 'color', value: null, level: 'pending', blocking: true });
+    expect(read(`${quote}。`, 'initial')).toMatchObject([{ ...review, id: expect.any(String), quote }]);
+    expect(read(`${exclusion}。${reference}。`, 'initial')).toMatchObject([
+      { ...review, id: expect.any(String), quote: `${exclusion}。${reference}` },
+    ]);
+  });
+
+  it.each([
+    '另一单颜色可以参考蓝色。',
+    '颜色可以参考蓝色。领型必须用立领。',
+    '颜色可以参考蓝色。\n\n',
+  ])('leaves an unrelated color reference outside the exclusion quote after %s', (context) => {
+    const quote = '采购时不要买红色面料';
+    const colors = read(`${context}${quote}。`, 'initial').filter(({ field }) => field === 'color');
+    expect(colors).toMatchObject([{ field: 'color', value: null, level: 'pending', blocking: true, quote }]);
+  });
+
   it('replaces an explicitly referenced preference without losing a neighboring hard field', () => {
     const quote = '颜色优先暖灰色，领型定为交领。前面提到的那个颜色别用';
     expect(read(`${quote}。交领照旧。`)).toMatchObject([
@@ -118,6 +140,31 @@ describe('requirement stance and scope', () => {
     expect(read('优先用暖灰。先记录下单联系人。前面提到的颜色别用。')).not.toContainEqual(
       expect.objectContaining({ op: 'neq' }),
     );
+  });
+
+  it('keeps the unlisted color and its rejection in one verifiable span', () => {
+    const quote = '上衣原本考虑红色，领型定为圆领。前面提到的那个颜色不要用';
+    expect(read(`${quote}。圆领照旧。`, 'initial')).toMatchObject([
+      { field: 'collar', value: null, level: 'pending', blocking: true, quote: '领型定为圆领' },
+      { field: 'color', value: null, level: 'pending', blocking: true, quote, sourceTurnId: 'customer' },
+    ]);
+    const revision = '配色暂时考虑紫色，面料用真丝。刚才说的那个颜色别用';
+    expect(read(`${revision}。`)).toContainEqual(expect.objectContaining({
+      field: 'color', value: null, level: 'pending', blocking: true, quote: revision, sourceTurnId: 'customer',
+    }));
+  });
+
+  it.each([
+    '这套原本考虑红色或蓝色',
+    '这套原先考虑蓝色，颜色优先藏青',
+    '另一单原本考虑红色，这件领型定为圆领',
+    '上次做的那件原本考虑红色',
+    '上衣原本考虑红色。先记下交货时间',
+  ])('does not attach unverified earlier colors to an exclusion after %s', (context) => {
+    const rejection = '前面提到的那个颜色别用';
+    const exclusions = read(`${context}。${rejection}。`, 'initial')
+      .filter(({ field, op, blocking }) => field === 'color' && (op === 'neq' || blocking));
+    expect(exclusions).toMatchObject([{ value: null, level: 'pending', blocking: true, quote: rejection }]);
   });
 
   it('reports open questions and prior intentions without turning them into active decisions', () => {
