@@ -1,7 +1,7 @@
 import { DECISION_CATALOG, simulationSource } from '../data/decisionCatalog';
 import { FABRICS } from '../data/fabrics';
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
-import { SCENES } from '../data/scenes';
+import { SCENES, sceneFits } from '../data/scenes';
 import type {
   AssetEvidence,
   AssetSource,
@@ -23,16 +23,6 @@ const patterns = new Map(DECISION_CATALOG.patterns.map((record) => [record.asset
 const fabrics = new Map(DECISION_CATALOG.fabrics.map((record) => [record.asset.id, record]));
 const crafts = new Map(DECISION_CATALOG.crafts.map((record) => [record.asset.id, record]));
 const scenes = new Map(SCENES.map((scene) => [scene.id, scene]));
-
-const sceneTypes: Record<string, readonly string[] | undefined> = {
-  'scene-bund-protocol': ['indoor_formal'],
-  'scene-lujiazui-summit': ['indoor_formal'],
-  'scene-jingan-salon': ['indoor_formal', 'indoor_performance'],
-  'scene-outdoor-stage': ['outdoor_stage'],
-  'scene-bund-banquet': ['formal_evening', 'indoor_formal'],
-  'scene-studio-minimal': [],
-  'scene-atelier-showroom': [],
-};
 
 const fieldLabels: Record<ConstraintField, string> = {
   businessType: '业务类型', quantity: '套数', scene: '使用场景', season: '穿着季节',
@@ -64,7 +54,7 @@ function describeValue(value: ConstraintValue): string {
   if (value === null) return '待核';
   if (value === true) return '是';
   if (value === false) return '否';
-  return valueLabels[String(value)] ?? String(value);
+  return valueLabels[String(value)] ?? scenes.get(String(value))?.name ?? String(value);
 }
 
 function matchingValue(constraint: Constraint, equals: boolean): boolean {
@@ -255,11 +245,9 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
       case 'quantity':
         return quantityChecks(constraint);
       case 'scene': {
-        const types = sceneTypes[config.sceneId];
-        const equals = types?.includes(String(constraint.value)) || constraint.value === config.sceneId;
-        const documented = scene && (types?.length || constraint.value === scene.id);
-        return [checkConstraint(teamEvidence(patternAsset), constraint, documented ? scene.id : null, equals,
-          documented ? scene.shortName : '场景类别待核')];
+        const fits = scene && sceneFits(scene.id, String(constraint.value));
+        if (!scene || fits === undefined) return [checkConstraint(teamEvidence(patternAsset), constraint, null, false, '场景类别待核')];
+        return [checkConstraint(teamEvidence(patternAsset), constraint, scene.id, fits, scene.shortName)];
       }
       case 'season':
         return [
@@ -373,19 +361,23 @@ export function evaluateDecisionConfiguration(requirement: DecisionRequirement, 
 }
 
 function chooseScene(requirement: DecisionRequirement, pattern: PatternRecord, fabric: FabricRecord): string {
-  const common = pattern.asset.suitableScenes.filter((id) => scenes.has(id) && fabric.asset.suitableScenes.includes(id));
+  const common = pattern.asset.suitableScenes.filter((id) =>
+    scenes.get(id)?.suitableBusiness.includes(pattern.asset.businessType) && fabric.asset.suitableScenes.includes(id));
   if (!common.length) return pattern.asset.suitableScenes[0] ?? requirement.input.targetSceneId;
   const constraints = requirement.constraints.filter((constraint) => constraint.field === 'scene' && constraint.value !== null && constraint.level !== 'pending');
   const options = common.map((id) => {
-    const outcomes = constraints.map((constraint) => matchingValue(constraint,
-      id === constraint.value || Boolean(sceneTypes[id]?.includes(String(constraint.value)))));
+    const outcomes = constraints.map((constraint) => {
+      const fits = sceneFits(id, String(constraint.value));
+      return fits === undefined ? 'unknown' : matchingValue(constraint, fits) ? 'satisfies' : 'conflict';
+    });
     return {
       id,
-      failures: constraints.filter((constraint, index) => constraint.level === 'hard' && !outcomes[index]).length,
-      preferences: constraints.filter((constraint, index) => constraint.level === 'preference' && outcomes[index]).length,
+      conflicts: constraints.filter((constraint, index) => constraint.level === 'hard' && outcomes[index] === 'conflict').length,
+      unknowns: constraints.filter((constraint, index) => constraint.level === 'hard' && outcomes[index] === 'unknown').length,
+      preferences: constraints.filter((constraint, index) => constraint.level === 'preference' && outcomes[index] === 'satisfies').length,
     };
   });
-  return options.sort((first, second) => first.failures - second.failures
+  return options.sort((first, second) => first.conflicts - second.conflicts || first.unknowns - second.unknowns
     || second.preferences - first.preferences
     || Number(second.id === requirement.input.targetSceneId) - Number(first.id === requirement.input.targetSceneId))[0].id;
 }
@@ -401,18 +393,39 @@ function representativeCandidates<T extends { candidate: CandidateCombination }>
   return results.slice(0, 4);
 }
 
+function craftPackagesForRequest(pattern: PatternRecord, requestedCrafts: ReadonlySet<string>): readonly (readonly string[])[] {
+  const packages = pattern.profile.craftPackages;
+  if (!requestedCrafts.size) return packages;
+  const ordered = new Map(packages.map((ids) => [ids.toSorted().join('|'), ids]));
+  for (const ids of packages) {
+    // Expose explicitly requested optional details from a documented package without mixing packages.
+    const selected = ids.filter((id) => requestedCrafts.has(id) || requestedCrafts.has(crafts.get(id)?.asset.code ?? ''));
+    if (selected.length > 0 && selected.length < ids.length) {
+      const key = selected.toSorted().join('|');
+      if (!ordered.has(key)) ordered.set(key, selected);
+    }
+  }
+  return [...ordered.values()];
+}
+
 export function matchDecision(requirement: DecisionRequirement): MatchResult {
-  const options = DECISION_CATALOG.patterns.flatMap((pattern) => DECISION_CATALOG.fabrics.flatMap((fabric) => {
-    const sceneId = chooseScene(requirement, pattern, fabric);
-    return pattern.profile.craftPackages.flatMap((craftIds) => {
-      // Synthetic washable fabrics need an identified construction package.
-      if (craftIds.length === 0 && fabric.profile.care === 'machine_wash') return [];
-      return [evaluate(requirement, {
-        patternId: pattern.asset.id, fabricId: fabric.asset.id, craftIds: [...craftIds], sceneId,
-        activeView: 'scene_look', focusedHotspotId: null,
-      })];
+  const requestedCrafts = new Set(requirement.constraints.flatMap(({ field, op, level, state, value }) =>
+    field === 'craft' && op === 'eq' && level !== 'pending' && (state === 'explicit' || state === 'confirmed') && typeof value === 'string'
+      ? [value] : []));
+  const options = DECISION_CATALOG.patterns.flatMap((pattern) => {
+    const craftPackages = craftPackagesForRequest(pattern, requestedCrafts);
+    return DECISION_CATALOG.fabrics.flatMap((fabric) => {
+      const sceneId = chooseScene(requirement, pattern, fabric);
+      return craftPackages.flatMap((craftIds) => {
+        // Synthetic washable fabrics need an identified construction package.
+        if (craftIds.length === 0 && fabric.profile.care === 'machine_wash') return [];
+        return [evaluate(requirement, {
+          patternId: pattern.asset.id, fabricId: fabric.asset.id, craftIds: [...craftIds], sceneId,
+          activeView: 'scene_look', focusedHotspotId: null,
+        })];
+      });
     });
-  }));
+  });
   const suppliedReference = PRESET_DEMO_CASES.find((preset) => preset.id === requirement.input.presetDemoId
     && preset.input.rawNarrative === requirement.input.rawNarrative)?.recommendedConfig;
   const matchesSuppliedReference = ({ config }: CandidateCombination) => Boolean(suppliedReference

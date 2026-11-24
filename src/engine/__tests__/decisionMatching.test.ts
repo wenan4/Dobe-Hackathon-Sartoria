@@ -130,6 +130,28 @@ describe('Static catalog decision matching', () => {
     expect(candidate.evidence).toContainEqual(expect.objectContaining({ field: 'scene', outcome: 'unknown' }));
   });
 
+  it('keeps a named venue through extraction and filters eligible options by its exact ID', () => {
+    const brief = buildLocalDecisionRequirement({
+      ...uniformRequirements.input, rawNarrative: '26套西装，用于正式文化礼厅。场合是室内正式接待。',
+    });
+    expect(brief.constraints.filter((item) => item.field === 'scene' && item.level === 'hard')
+      .map((item) => item.value)).toEqual(expect.arrayContaining(['scene-bund-protocol', 'indoor_formal']));
+    expect(brief.constraints.some((item) => item.field === 'scene' && item.blocking)).toBe(false);
+    const matched = matchDecision(brief);
+    expect(matched.recommended?.config.sceneId).toBe('scene-bund-protocol');
+    expect(evaluateDecisionConfiguration(brief, { ...matched.recommended!.config, sceneId: 'scene-lujiazui-summit' }).status).toBe('rejected');
+  });
+
+  it('recognizes every full catalog venue name without deriving garment attributes from its name', () => {
+    for (const { id, name } of SCENES) {
+      for (const [wording, op] of [['地点安排在', 'eq'], ['地点不要选', 'neq']]) {
+        const parsed = buildLocalDecisionRequirement({ ...uniformRequirements.input, rawNarrative: wording + name });
+        expect(parsed.constraints.filter((item) => item.level === 'hard').map((item) => [item.field, item.value, item.op]))
+          .toEqual([['scene', id, op]]);
+      }
+    }
+  });
+
   it('returns no match when silk and machine wash are mandatory and reruns if care is edited', () => {
     const conflict = matchDecision(updated(constraint('fabric', 'silk')));
     expect(conflict).toMatchObject({ status: 'no_match', recommended: null, alternative: null });
@@ -240,5 +262,27 @@ describe('Static catalog decision matching', () => {
       const interpreted = buildLocalDecisionRequirement(demo.input);
       expect(matchDecision(interpreted).recommended?.config).toEqual(demo.recommendedConfig);
     }
+  });
+
+  it('offers the explicitly requested dry-clean-compatible details within one documented package', () => {
+    const craftIds = ['crf-full-canvas-guiba', 'crf-milanese-cuff-label'];
+    const requirement = updated(
+      constraint('style', 'traditional_uniform'),
+      constraint('collar', 'stand'),
+      constraint('care', 'dry_clean'),
+      ...craftIds.map((id) => ({ ...constraint('craft', id), id: `craft:${id}` })),
+    );
+    const manualConfig = {
+      patternId: 'pat-haipai-suit-ensemble', fabricId: 'fab-bund-navy-wool130', craftIds,
+      sceneId: 'scene-lujiazui-summit', activeView: 'scene_look' as const, focusedHotspotId: null,
+    };
+    const manual = evaluateDecisionConfiguration(requirement, manualConfig);
+    expect(manual.status).toBe('eligible');
+    const automatic = matchDecision(requirement);
+    expect(automatic.status).toBe('matched');
+    expect(automatic.recommended).toEqual(manual);
+    expect(automatic.recommended?.evidence.filter(({ field }) => field === 'care'))
+      .toEqual(expect.arrayContaining(craftIds.map((id) =>
+        expect.objectContaining({ assetId: id, outcome: 'satisfies', value: 'dry_clean' }))));
   });
 });

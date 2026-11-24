@@ -231,6 +231,61 @@ describe('the offline requirement interview', () => {
     ]);
   });
 
+  it('counts the order separately from independent garment pieces and retains explicit movement requirements', () => {
+    const result = extractRevisionConstraints({
+      id: 'separate-pieces', text: '订三套两件式礼宾服。夹克与半身裙要分开做成两件。袖窿位置要预留活动余量，举手打拍不能被成衣扯住。',
+    });
+    expect(result.filter(({ field }) => ['quantity', 'category', 'patternStructure', 'easeAllowance'].includes(field))).toMatchObject([
+      { field: 'quantity', value: 3 },
+      { field: 'category', value: 'two_piece' },
+      { field: 'patternStructure', value: 'two_piece' },
+      { field: 'easeAllowance', op: 'eq', value: 'arm_mobility' },
+    ]);
+    expect(result.some(({ blocking }) => blocking)).toBe(false);
+  });
+
+  it('keeps colloquial preference strength distinct from explicit personal or company order forms', () => {
+    const personal = extractRevisionConstraints({ id: 'bespoke', text: '按私人量体订做一件女款礼服，做直身H版。深蓝我本人更中意。' });
+    expect(personal).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'businessType', value: 'private_couture', level: 'hard' }),
+      expect.objectContaining({ field: 'category', value: 'dress' }),
+      expect.objectContaining({ field: 'patternStructure', value: 'h_line' }),
+      expect.objectContaining({ field: 'color', value: 'navy', level: 'preference' }),
+    ]));
+    const team = extractRevisionConstraints({ id: 'collective', text: '后勤开团单，用现代极简风，别拿老式机关制服替代。' });
+    expect(team).toMatchObject([
+      { field: 'businessType', value: 'corporate_uniform', quote: '后勤开团单' },
+      { field: 'style', op: 'eq', value: 'modern' },
+      { field: 'style', op: 'neq', value: 'traditional_uniform' },
+    ]);
+  });
+
+  it('preserves polarity when a garment term includes a technical modifier', () => {
+    const excluded = extractRevisionConstraints({ id: 'technical-exclusions', text: '不准用窄平驳领，不穿立领，设计经理不接受专业的干洗。' });
+    expect(excluded).toMatchObject([
+      { field: 'collar', op: 'neq', value: 'lapel' },
+      { field: 'collar', op: 'neq', value: 'stand' },
+      { field: 'care', op: 'neq', value: 'dry_clean' },
+    ]);
+  });
+
+  it('keeps attributed negative preferences soft and explicit trailing exclusions hard', () => {
+    const result = extractRevisionConstraints({
+      id: 'negative-preference', text: '立领我本人不太中意，深蓝这边更偏爱。专业干洗后勤明确不接受，另外我不怎么喜欢亮面。',
+    });
+    expect(result).toMatchObject([
+      { field: 'collar', op: 'neq', value: 'stand', level: 'preference', quote: '立领我本人不太中意' },
+      { field: 'color', op: 'eq', value: 'navy', level: 'preference', quote: '深蓝这边更偏爱' },
+      { field: 'care', op: 'neq', value: 'dry_clean', level: 'hard', quote: '专业干洗后勤明确不接受' },
+      { field: 'luster', op: 'neq', value: 'high', level: 'preference', quote: '我不怎么喜欢亮面' },
+    ]);
+  });
+
+  it('keeps the approved plan intact while applying a separate hem change', () => {
+    const result = extractRevisionConstraints({ id: 'plan', text: '春季和正式礼厅仍照原单只把裙长改成及踝。' });
+    expect(result).toMatchObject([{ field: 'lengthRatio', op: 'eq', value: 'ankle', quote: '只把裙长改成及踝' }]);
+  });
+
   it('handles compact workplace phrasing and coordinated exclusions without reversing polarity', () => {
     const observations = extractRevisionConstraints({
       id: 'workplace',

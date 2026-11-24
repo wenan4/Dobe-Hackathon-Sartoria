@@ -1,5 +1,6 @@
 import { CRAFTS } from '../data/crafts';
 import { FABRICS } from '../data/fabrics';
+import { SCENES, sceneFits } from '../data/scenes';
 import { REQUIREMENT_SCHEMA_VERSION } from '../types/decisions';
 import type { ClarificationQuestion, Constraint, ConstraintField, DecisionRequirement, RequirementTurn } from '../types/decisions';
 import type { RequirementInput } from '../types/sartoria';
@@ -21,16 +22,18 @@ const craftAliases: Partial<Record<string, string>> = {
   'crf-full-canvas-guiba': '全毛衬(?:手工)?归拔',
 };
 
-const TWO_PIECE_COMPOSITION = '(?:分成|分为|由)(?:上装|上衣|上身)(?:和|与|加|配|及|、)(?:裙子|半身裙|长裙|下装|裤子)(?:(?:这)?(?:两|二|2)件)?';
+const GARMENT_COMPONENT_PAIR = '(?:上装|上衣|上身|外套|夹克)(?:和|与|同|加|配|及|、)(?:裙子|下裙|半身裙|长裙|下装|裤子|长裤)';
+const TWO_PIECE_COMPOSITION = `(?:(?:分成|分为|由)${GARMENT_COMPONENT_PAIR}(?:(?:这)?(?:两|二|2|２)件)?|${GARMENT_COMPONENT_PAIR}(?:得|要|必须|需要|应当|都|分别|各自|是|做成|为|\\s)*(?:(?:两|二|2|２)件(?:独立|分开的?)(?:单品)?|(?:各自)?独立(?:成件|制作|成衣|做)?|分开(?:制作|做成|做为|做成各自的|裁剪|做|裁)?(?:各自的)?(?:(?:两|二|2|２)件)?)(?!穿|搭配|洗|包装|清洗|寄|发货|运输))`;
 const WORKWEAR = '工作服|员工服|职业[服装]|工装';
 
 export const requirementFields = {
   businessType: { label: '业务类型', choices: [
-    ['corporate_uniform', '团体职业服', `团装|团服|团定|团购|团订|团体(?:定制|订做|订购|订制|采购|下单|款|套装|工装|工作服|职业[服装])|团队(?:工装|制服|统一着装|工作服|职业[服装])|(?:公司|企业|单位|员工|职工|门店|店里|柜台)(?:的)?(?:工装|制服|工作服|职业[服装])|会务服|集体定制|(?:批量|统一)(?:定做|订做|定制)|(?:统一|集体)(?:${WORKWEAR})|(?:员工|同事|职工|团队)(?:要|均|统一)?穿的.{0,4}(?:${WORKWEAR})|工服团单|(?:给|为)(?:整个|我们)?(?:公司|企业|单位|部门|团队|员工|职工|会务组)(?:的?(?:员工|同事|成员|职员))?(?=.{0,12}(?:定做|订做|做|定制|配|准备|订))|(?:给|为).{0,8}(?:员工|同事|职工|成员)(?=.{0,12}(?:每人|各一套|各做|各发|人手|一人一套))|员工服|工作服`],
-    ['private_couture', '个人高定', '个人高定|个人定制|个人定做|个人订[制做]|私人定制|个人礼服|私人高定|私人订制|私定|私订|个人款|单人定[制做]|只给我自己|我一个人穿|我(?:自己|本人)穿|(?:只)?给(?:我)?(?:自己|本人)(?:做|订[做制]?|定做|定制|准备|量体)|(?:给)?我个人(?:定[制做]|订[做制]?|做|量身)'],
+    ['corporate_uniform', '团体职业服', `团装|团服|团定|团购|团订|团体(?:定制|订做|订购|订制|采购|下单|款|套装|工装|工作服|职业[服装])|团队(?:工装|制服|统一着装|工作服|职业[服装])|(?:公司|企业|单位|员工|职工|门店|店里|柜台)(?:的)?(?:工装|制服|工作服|职业[服装])|会务服|集体定制|(?:批量|统一)(?:定做|订做|定制)|(?:统一|集体)(?:${WORKWEAR})|(?:员工|同事|职工|团队)(?:要|均|统一)?穿的.{0,4}(?:${WORKWEAR})|(?:工服|发出?|开|接|下|签)团单|团单(?:采购|下单)|(?:给|为)(?:整个|我们)?(?:公司|企业|单位|部门|团队|员工|职工|会务组)(?:的?(?:员工|同事|成员|职员))?(?=.{0,12}(?:定做|订做|做|定制|配|准备|订))|(?:给|为).{0,8}(?:员工|同事|职工|成员)(?=.{0,12}(?:每人|各一套|各做|各发|人手|一人一套))|员工服|工作服`],
+    ['private_couture', '个人高定', '(?:个人|私人|单人)(?:(?:量身|量体|高级)?[定订][制做]|高定)|个人礼服|私定|私订|个人款|只给我自己|我一个人穿|我(?:自己|本人)穿|(?:只)?给(?:我)?(?:自己|本人)(?:做|订[做制]?|定做|定制|准备|量体)|(?:给)?我个人(?:定[制做]|订[做制]?|做|量身)'],
   ] },
   quantity: { label: '数量', choices: [] },
   scene: { label: '场景', choices: [
+    ...SCENES.map(({ id, name }): Choice => [id, name, escapePattern(name)]),
     ['formal_evening', '正式晚宴', '(?:室内(?:的)?(?:正式)?)?晚宴|晚礼宴|晚会|慈善宴会|正式酒会'],
     ['indoor_performance', '室内演出', '室内.{0,6}(?:舞台|演出|演奏|表演)|音乐厅|(?<!露天|户外|室外)剧院|(?<!露天|户外|室外)剧场(?:内|里面|里)?(?:的)?(?:演出|表演|演奏)|室内剧场'],
     ['indoor_formal', '室内正式', '(?:室内|展厅|馆内|会议厅|报告厅).{0,7}(?:正式|会务|峰会|会议|商务|接待|迎宾|典礼|论坛)|(?:正式|会务|论坛|会展|接待).{0,7}(?:室内|展厅|馆内)|正式礼厅|会议中心|(?:礼宾接待|会议接待|商务接待)(?!(?:的)?(?:小组|组|队|班|部|科|团队|职工|员工|人员))'],
@@ -44,17 +47,17 @@ export const requirementFields = {
   category: { label: '品类', choices: [
     ['two_piece', '两件式', '两件式|两件套|二件式|二件套|两件装|外套(?:搭|配|和|加|与).{0,5}(?:连衣裙|长裙)|(?:连衣裙|长裙)(?:搭|配|和|加|与).{0,5}外套'],
     ['suit', '西装套装', '西服套装|西装套装|西服|西装(?!领)|成套西装|(?:商务|通勤|礼宾|职业|正装)套装|男士西礼服'],
-    ['dress', '连衣裙／礼服', '连衣裙|连衣礼服|连身礼服|长款?礼服|晚礼服|长裙|礼服裙|礼裙|女士礼服|(?<=一条)礼服'],
+    ['dress', '连衣裙／礼服', '连衣裙|连衣礼服|连身礼服|长款?礼服|晚礼服|长裙|礼服裙|礼裙|女(?:士|式|款|装)礼服|(?<=一条)礼服'],
     ['jacket', '外套', '外套|夹克|上衣|短褂|罩衫'],
   ] },
   patternStructure: { label: '版型结构', choices: [
-    ['h_line', 'H 型直身', '[hHＨ]\\s?[型形]|(?:字母\\s*)?[hHＨ]\\s*(?:一样|那样)(?:的)?(?:直|笔直)|直身版型|直身结构|直筒版型|直身廓形'],
+    ['h_line', 'H 型直身', '(?:直身|直筒)?[hHＨ]\\s*[型形版]|(?:字母\\s*)?[hHＨ]\\s*(?:一样|那样)(?:的)?(?:直|笔直)|直身版型|直身结构|直筒版型|直身廓形'],
     ['two_piece', '两件式', `两件式|两件套|二件式|二件套|两件装|上下(?:分成|分为)?两件|${TWO_PIECE_COMPOSITION}|外套(?:搭|配|和|加|与).{0,5}(?:连衣裙|长裙)|(?:连衣裙|长裙)(?:搭|配|和|加|与).{0,5}外套`],
   ] },
   collar: { label: '领型', choices: [
     ['cross_open', '交领开襟', '交领'], ['diagonal', '斜襟', '斜襟'],
     ['stand', '立领', '立领|竖领|领(?:子|口|型)(?:得|要|必须|应该|就|会)?(?:竖|立)(?:起|起来|着)'],
-    ['lapel', '翻领', '(?:西装|西服)(?:的)?(?:窄|宽|尖|平){0,2}(?:翻领|驳领)|翻领|驳领|西装领|西服领'],
+    ['lapel', '翻领', '(?:(?:西装|西服)(?:的)?)?(?:窄|宽|尖|平){0,2}(?:翻领|驳领)|西装领|西服领'],
   ] },
   fabric: { label: '面料', choices: [
     ['blend', '混纺', '(?:棉涤|丝毛|毛丝|涤棉|毛涤)?混纺'], ['silk', '真丝', '纯真丝(?!混纺)|真丝(?!混纺)|桑蚕丝(?!混纺)|纯蚕丝|全蚕丝'],
@@ -80,14 +83,14 @@ export const requirementFields = {
     ['floor', '及地', '及地|拖地|曳地|拂地|擦地|落地长|到地(?:面|板)?|贴地长|裙(?:摆|脚)齐地'],
   ] },
   easeAllowance: { label: '松弛余量', choices: [
-    ['arm_mobility', '肩臂活动余量', '(?:不要|不能|别|不|避免)压肩|(?:不要|不能|别|不)勒肩|(?:不要|不能|别|不)卡(?:住)?(?:手臂|胳膊|臂|肩)|(?:不|别)夹(?:腋下|胳膊)|(?:抬|举|举起)(?:胳膊|臂|手)(?:时)?(?:、坐奏都要方便|.{0,6}(?:不卡|方便|自然|顺畅|自如|舒展|伸得开|不受限|不紧绷|不(?:能|要|会)?卡住|有余量))|(?:袖子|袖管|胳膊|手臂|双臂).{0,6}(?:抬|举)得(?:起(?:来)?|开|高|动)|肩(?:臂|背)(?:活动)?余量|(?:袖笼|袖窿)放量|(?:坐奏|坐着演奏).{0,5}(?:方便|不卡|活动)'],
+    ['arm_mobility', '肩臂活动余量', '(?:不要|不能|别|不|避免)压肩|(?:不要|不能|别|不)勒肩|(?:不要|不能|别|不)卡(?:住)?(?:手臂|胳膊|臂|肩)|(?:不|别)夹(?:腋下|胳膊)|(?:抬|举|举起)(?:胳膊|臂|手)(?:时)?(?:、坐奏都要方便|.{0,8}(?:不卡|方便|自然|顺畅|自如|舒展|伸得开|不受限|不紧绷|不(?:能|要|会|可)?(?:被(?:衣服|成衣|袖子|袖口|肩袖))?(?:卡住|扯住|拉住|勒住|牵扯)|有余量))|(?:袖子|袖管|胳膊|手臂|双臂).{0,6}(?:抬|举)得(?:起(?:来)?|开|高|动)|肩(?:臂|背)(?:活动)?余量|(?:袖笼|袖窿)(?:部位|位置)?(?:需要|必须|应该|宜|要|得)?(?:放量|留(?:足|出|有)?(?:活动)?(?:余|松)量|预留(?:活动)?(?:余|松)量)|(?:坐奏|坐着演奏).{0,5}(?:方便|不卡|活动)'],
   ] },
   closure: { label: '开合细节', choices: [
     ['no_visible_buttons', '无外露纽扣', '无外露(?:的)?(?:纽扣|扣子|扣)|不(?:要|用|许)(?:看见|露出|外露)(?:纽扣|扣子|扣)|(?:纽扣|扣子|扣件)(?:也|仍然?|还是|始终|一律)?(?:都)?(?:不要|不能|不可|不得|不许|禁止)(?:外露|露(?:出|在外)?)|隐藏纽扣|隐门襟|暗扣|隐扣|无明扣|无扣式'],
     ['visible_buttons', '外露纽扣', '外露(?:的)?(?:纽扣|扣子|扣)|明扣'],
   ] },
   care: { label: '洗护', choices: [
-    ['machine_wash', '可机洗', '机洗|机水洗|洗衣机(?:洗)?|滚筒洗'], ['dry_clean', '干洗', '干洗'], ['hand_wash', '手洗', '手洗|手工水洗'],
+    ['machine_wash', '可机洗', '机洗|机水洗|洗衣机(?:洗)?|滚筒洗'], ['dry_clean', '干洗', '(?:专业(?:的)?|送店)?干洗'], ['hand_wash', '手洗', '手洗|手工水洗'],
   ] },
   wrinkleResistance: { label: '耐皱', choices: [
     [true, '要求耐皱', '耐皱|抗皱|防皱|抗褶皱|免熨|免烫|不(?:易|容易)皱|不(?:易|容易)起(?:褶|皱)|不起(?:皱|褶)|不容易压出折痕'],
@@ -99,8 +102,8 @@ export const requirementFields = {
     ['low', '低光泽', '低光泽|哑光|消光|低反光|少(?:一)?点反光'],
   ] },
   style: { label: '风格', choices: [
-    ['traditional_uniform', '传统制服', '传统(?:制服|工装|工服|工作服)|老式(?:制服|工装|工服)|制服(?:感|味)'],
-    ['modern', '现代利落', '现代(?:感|风格|简约|利落|商务)|(?:现代|简约|极简)商务'], ['new_chinese', '新中式', '新中式'],
+    ['traditional_uniform', '传统制服', '(?:传统|老式)(?:(?:单位|企业|机关|公司|制式)(?:的)?)?(?:制服|工装|工服|工作服)|制服(?:感|味)'],
+    ['modern', '现代利落', '现代(?:感|风格|简约|极简|利落|商务)|(?:现代|简约|极简)商务|极简(?:风格|风|造型)'], ['new_chinese', '新中式', '新中式'],
   ] },
   craft: { label: '工艺', choices: CRAFTS.map((craft): Choice => [
     craft.id, craft.shortName, [craft.name, craft.shortName, craft.code, craft.id].map(escapePattern)
@@ -128,17 +131,19 @@ interface FieldMatch {
   start: number;
   end: number;
 }
-const PREFERENCE = /(?:最好|优先|倾向|偏好|尽量|希望|想要|喜欢|更偏|可考虑|对比|更想|请优先|有条件的话)/;
+const PREFERENCE = /(?:最好|优先|倾向|偏好|偏爱|尽量|希望|想要|喜欢|中意|更偏|可考虑|对比|更想|请优先|有条件的话)/;
+const TRAILING_ACTOR = /^(?:(?:我(?:们)?|客户|买方|采购|后勤|行政|设计师|版师)(?:个人|本人|这边)?|个人|本人|这边)\s*/;
+const PREFERENCE_AFTER = /^(?:(?:也可|亦可|即可|为佳|优先|就好|更好|有(?:当然)?更好)|(?:比较|相对|较|挺|更|蛮|也|还|很|特别|最|倒是)*\s*(不(?:太|那么|怎么)?)?(?:喜欢|偏好|偏爱|中意|看好|倾向))/;
 const MANDATORY = /(?:必须|务必|只能|仅限|(?<!未|没|不)指定|非要|(?<!不)一定要|不可|不能|不接受|严禁|绝不|不得|不许|禁止|硬性|必选|都得|都要|只准|切忌|谢绝)/;
-const NEGATIVE_HEAD = '不能|不可|不要|不得|不许|避免|避开|远离|不接受|不考虑|排除|不想要|不想|不喜欢|不希望|不偏好|不用|不选|不准|不宜|不像|不做|不采用|不是|不在|不使用|不允许|不支持|别用|别选|别要|别像|别|拒绝|禁止|严禁|禁用|禁|忌用|切忌|谢绝|杜绝|不能有|无外露|无|非(?!要)|绝不';
-const NEGATION = new RegExp(`(?:${NEGATIVE_HEAD})(?:\\s|再|给|要|订购|订|选|用|使用|采用|是|有|含有|含|带去|拿去|拿|把|放进|送去|送到|叫人|像|做成|做|那种|类似|太|特别|那么|任何|一样|略带|的)*$`);
+const NEGATIVE_HEAD = '不能|不可|不要|不得|不许|避免|避开|远离|不接受|不考虑|排除|不想要|不想|不(?:太|那么|怎么)?(?:喜欢|偏好|偏爱|中意)|不希望|不用|不选|不穿|不准|不宜|不像|不做|不采用|不是|不在|不使用|不允许|不支持|别用|别选|别要|别像|别|拒绝|禁止|严禁|禁用|禁|忌用|切忌|谢绝|杜绝|不能有|无外露|无|非(?!要)|绝不';
+const NEGATION = new RegExp(`(?:${NEGATIVE_HEAD})(?:\\s|再|给|要|订购|订|选|用|使用|采用|穿|是|有|含有|含|带去|拿去|拿|把|放进|送去|送到|叫人|像|做成|做|那种|类似|太|特别|那么|任何|一样|略带|的)*$`);
 const COORDINATOR = /^(?:、|和|或(?:者|是)?|及|与|\/|／)\s*(?:也|同样)?$/;
 const FORBIDDEN_AFTER = /^(?:(?:则|都|也|一律|一定|明确|坚决|绝对|完全|仍然?|还|始终|严格|暂且)\s*)*(?:不要|不做|不用|不行|不可以|不能用|不考虑|不接受|不采用|不选|不一样|区别开|禁用|禁止|被排除|排除|别用|不准用|禁)/;
 const WITHDRAWAL = /(?:撤回|撤销|取消|放弃|去掉|撤掉|不再要求|不要求|不需要|不强求|不强制|不硬性要求|不是必须|并非必须|不必|不用限定|不限制|不再限定|无需|不限|无要求|没有.{0,8}要求|不作要求)/;
 const UNAPPROVED_WITHDRAWAL = /(?:(?:尚未|还没(?:有)?|未曾|未经|没有|还未|未)(?:被|能)?(?:获准|得到批准|批准|同意|授权|许可|允许)?|先别|暂不|不能|别)(?:直接|自行|正式|先)?(?:撤回|撤销|取消|作废|去掉|撤掉)/;
 const AMBIGUITY = /(?:不确定|未确定|还没确定|不一定|还没决定|未指定|没定|待确认|未定|再说|先不定|待定|待选|没拍板|先留白|先别(?:填|定|选|决定)|暂不(?:定|选|决定)|等.{0,10}(?:再定|确认|决定|审批|批复|回复|建议)|随意|都行|都可以|无所谓|看情况|左右|大概|差不多|约(?:为|有)?\s*[\d一二三四五六七八九十]|[\d一二三四五六七八九十]\s*(?:到|至|[-~～])\s*[\d一二三四五六七八九十])/;
 const REFERENCE_ONLY = /(?:(?:只|仅)(?:是|供|作|当作|用作|作为)?\s*(?:参考|对照|示意|备选|候选)|(?:可以|先)(?:放|摆|列)(?:在|入|作|为)?(?:备选|候选)|(?:可作(?:为)?|留作)(?:备选|候选|参考)|不(?:算|作为)正式要求)/;
-const PROTECTED = /(?:不动|保持不变|保持原样|不变|保持原来|按原来|照原来|按已(?:经)?确认|按此前确认|沿用已(?:经)?确认|照前一版|保留原|维持原|照旧|维持现状|仍然保留|继续保留|依然保留)/;
+const PROTECTED = /(?:不动|保持不变|保持原样|不变|保持原来|按原来|照原来|按已(?:经)?确认|按此前确认|沿用已(?:经)?确认|照前一版|保留原|维持原|照旧|维持现状|仍然保留|继续保留|依然保留|(?:还是|仍然?|继续|维持|沿用)(?:用|采用|按|照)?原(?:计划|方案|单)|(?:按|照)原(?:计划|方案|单))/;
 const CANCEL_PROPOSED_CHANGE = /(?:取消|撤销|撤回|收回|不采纳|不批准)(?:刚才|本次|这次|这项|那项|这条).{0,18}(?:改动|改稿|变更|调整|修改|提议|建议|请求)/;
 const CHANGE = /(?:改回(?:成|为)?|换回(?:成|为)?|改成|改为|换成|换为|替换为|调整为|调整成|调整到|追加至|加到|增至|增加到|减至|减到|缩减到|提高到|降到|改用|换用|改做|(?<![修更篡])改(?!良|进|善|造|版|动|编|过|写|稿)(?=\S))/;
 const ALTERNATIVE = /(?:或(?:者|是)?|二选一|择一|任选)/;
@@ -255,6 +260,7 @@ function catalogScopedMatches(field: ConstraintField, matches: FieldMatch[], tar
       if (match.value === 'two_piece' && (/(?:版型|结构|廓形|剪裁).{0,5}$/.test(target.slice(0, match.start)) ||
         /^(?:的)?(?:结构|构成|版型)/.test(target.slice(match.end)))) return false;
     }
+    if (field === 'businessType' && match.value === 'corporate_uniform' && /(?:传统|老式)(?:的)?$/.test(target.slice(0, match.start))) return false;
     if (field === 'fabric' && (/(?:仿|仿制|像|仿若|形似|类似|接近)\s*$/.test(target.slice(0, match.start)) ||
       /^(?:般|一样|似的|手感|质感|效果|光感)/.test(target.slice(match.end)))) return false;
     if (field === 'collar' && match.value === 'diagonal' && !/领(?:子|口|型).{0,7}$/.test(target.slice(0, match.start)) &&
@@ -264,7 +270,7 @@ function catalogScopedMatches(field: ConstraintField, matches: FieldMatch[], tar
 }
 
 function explicitlyRequired(prefix: string, suffix: string, statusScope: string): boolean {
-  return MANDATORY.test(statusScope) || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(suffix) ||
+  return MANDATORY.test(statusScope) || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(suffix.replace(TRAILING_ACTOR, '')) ||
     !PREFERENCE.test(statusScope) && /(?:需要|限定|必须|锁定|只能|只用|要用|得用|只接受|非得|固定|最少|至少|至多)/.test(statusScope);
 }
 
@@ -303,6 +309,12 @@ function readSegment(segment: string): Observation[] {
       field === 'craft' ? craftMatches : field === 'collar' ? collarMatches : patternsFor(field, target),
       target, craftMatches, collarMatches).sort((left, right) => left.start - right.start),
   }));
+  const venueNames = matchesByField.find(({ field }) => field === 'scene')?.matches
+    .filter(({ value }) => SCENES.some(({ id }) => id === value)) ?? [];
+  for (const found of matchesByField) {
+    if (found.field !== 'scene') found.matches = found.matches.filter((item) =>
+      !venueNames.some(({ start, end }) => start <= item.start && item.end <= end));
+  }
   const recognized = matchesByField.flatMap(({ field, matches }) => matches.map(({ start, end }) => ({ field, start, end })));
   const fields = matchesByField.map(({ field, matches }) => {
     const hint = fieldMentions[field];
@@ -335,7 +347,7 @@ function readSegment(segment: string): Observation[] {
       if (WITHDRAWAL.test(statusScope)) {
         return { ...unresolved(field, clause, WITHDRAWAL_REASON), withdraws: predicateFor(field, value, NEGATION.test(prefix)) };
       }
-      const mandatory = MANDATORY.test(prefix);
+      const mandatory = MANDATORY.test(prefix) || MANDATORY.test(suffix);
       const boundedQuantity = field === 'quantity' && /至少|至多|不超过|不少于|超过|以上|以下|[套件身]起/.test(statusScope);
       if (AMBIGUITY.test(statusScope) || boundedQuantity) {
         return unresolved(field, clause, '原话给出的范围或取值尚不确定。', mandatory || boundedQuantity);
@@ -347,9 +359,12 @@ function readSegment(segment: string): Observation[] {
       }
       const doubleCareNegative = field === 'care' && /(?:不要|拒绝|不接受|不能用)[^，,；;]{0,8}(?:不能|不可|不支持)\s*$/.test(prefix);
       const exclusiveCareExcluded = field === 'care' && /(?:不能|不要|拒绝|不接受|避开|不选|谢绝)(?:再)?(?:选|用|买|采用|接受|要)?(?:必须|只能|仅能|只可|仅可|仅限|只允许)\s*$/.test(prefix);
-      const excluded = !doubleCareNegative && (negativeChange || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(suffix) || exclusiveCareExcluded);
+      const trailingStance = suffix.replace(TRAILING_ACTOR, '');
+      const trailingPreference = PREFERENCE_AFTER.exec(trailingStance);
+      const excluded = !doubleCareNegative && (negativeChange || NEGATION.test(prefix) || FORBIDDEN_AFTER.test(trailingStance) ||
+        Boolean(trailingPreference?.[1]) || exclusiveCareExcluded);
       const preferred = (PREFERENCE.test(prefix) || PREFERENCE.test(changeLead) || /偏(?:向)?\s*$/.test(prefix) ||
-        /^(?:也可|亦可|即可|为佳|优先|就好|更好|有(?:当然)?更好)/.test(suffix)) && !mandatory;
+        trailingPreference !== null) && !mandatory;
       const categoryOrder = field === 'category' && /(?:想|希望)要?定制/.test(prefix);
       const level = (preferred && !categoryOrder) || (!mandatory && !change && field === 'luster' && /更亮|亮一点|亮一些/.test(statusScope))
         ? 'preference' : 'hard';
@@ -375,6 +390,15 @@ function readSegment(segment: string): Observation[] {
 type ConstraintPredicate = Pick<Constraint, 'field' | 'op' | 'value'>;
 
 export function constraintPredicatesConflict(left: ConstraintPredicate, right: ConstraintPredicate): boolean {
+  if (left.field === 'scene' && right.field === 'scene' && left.value !== null && right.value !== null) {
+    const named = [left, right].find((item) => SCENES.some(({ id }) => id === item.value));
+    if (named) {
+      const other = named === left ? right : left;
+      const fits = sceneFits(String(named.value), String(other.value));
+      if (named.op === 'eq') return fits !== undefined && (other.op === 'eq' ? !fits : fits);
+      return other.op === 'eq' && named.value === other.value;
+    }
+  }
   return left.field === right.field && left.value !== null && right.value !== null && (
     left.field !== 'craft' && left.op === 'eq' && right.op === 'eq' && left.value !== right.value ||
     left.op !== right.op && left.value === right.value
@@ -387,15 +411,18 @@ export function constraintsConflict(left: Constraint, right: Constraint): boolea
 
 function standaloneGarment(item: Constraint, observations: Constraint[]): boolean {
   if (item.field !== 'category' || item.value !== 'jacket' && item.value !== 'dress' || item.op !== 'eq' || !item.quote) return true;
+  const localFields = observations.filter((other) => other.quote === item.quote && other.value !== null);
+  if (localFields.some(({ field }) => field === 'quantity')) return true;
+  if (localFields.some(({ field, op, value }) => field === 'patternStructure' && op === 'eq' && value === 'two_piece') &&
+    new RegExp(TWO_PIECE_COMPOSITION).test(item.quote)) return false;
   const componentDescription = /^(?:这套的|其中的?|套装的|演出服的|配套的?)?(?:外套|夹克|上衣|下装|长裙|连衣裙)(?:的)?(?=颜色|配色|袖|领|下摆|衣长|裙长|面料|洗护|采用|用|选|定|控制|换|改|做|需|应|必须|要|只|建议)/;
   if (!componentDescription.test(item.quote)) return true;
-  const localFields = observations.filter((other) => other.quote === item.quote && other.value !== null).map(({ field }) => field);
-  return localFields.includes('quantity') || !localFields.some((field) =>
+  return !localFields.some(({ field }) =>
     ['collar', 'lengthRatio', 'fabric', 'color', 'luster', 'closure', 'motif', 'style', 'craft', 'easeAllowance', 'care'].includes(field));
 }
 
 export function extractRevisionConstraints(turn: RequirementTurn): Constraint[] {
-  const segments = turn.text.split(/(?:[，,；;。！？!?\n]+|(?<!不)但(?:是)?|另外|而且|同时|只是(?!\s*(?:参考|对照|示意|备选|候选))|并且|并(?=把|将|改|换|只|要)|随后|却|、(?=(?:不要|要用|只要|还要|不能|必须|最好|希望|洗护|面料|色系|颜色|工艺|领型|套数|数量))|(?<=不动|不变|照旧|待定|不强求)(?=只|改|换|想|请|调整|色系|颜色|洗护|可机洗|必须))/)
+  const segments = turn.text.split(/(?:[，,；;。！？!?\n]+|(?<!不)但(?:是)?|另外|而且|同时|只是(?!\s*(?:参考|对照|示意|备选|候选))|并且|并(?=把|将|改|换|只|要)|随后|却|、(?=(?:不要|要用|只要|还要|不能|必须|最好|希望|洗护|面料|色系|颜色|工艺|领型|套数|数量))|(?<=不动|不变|照旧|待定|不强求|原计划|原方案|原单)(?=只|改|换|想|请|调整|色系|颜色|洗护|可机洗|必须))/)
     .map((segment) => segment.trim()).filter(Boolean);
   const constraints = segments.flatMap(readSegment).map((observation, index): Constraint => ({
     ...observation,
