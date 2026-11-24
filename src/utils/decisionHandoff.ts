@@ -1,4 +1,5 @@
 import { CRAFTS } from '../data/crafts';
+import { buildColorSpec, colorReviewText } from '../engine/colorPresentation';
 import { findConstraintChanges } from '../engine/decisionRevisions';
 import type { Constraint, ConstraintField, DecisionExport, HandoffReview, Version } from '../types/decisions';
 import { buildPromptPackMarkdown } from './exporters';
@@ -81,6 +82,7 @@ export function decisionFieldLabel(field: string): string {
 }
 
 export function decisionValueLabel(constraint: Constraint | null): string {
+  if (constraint?.field === 'color' && constraint.value === null && constraint.blocking) return '用色要求待核';
   if (!constraint || constraint.value === null) return '待确认';
   const value = constraint.value;
   const label = typeof value === 'boolean'
@@ -110,6 +112,11 @@ export function buildDecisionExport(version: Version, previous: Version | null):
   const reviews = new Map<string, HandoffReview>();
   for (const question of version.requirement.questions) {
     reviews.set(question.field, humanReview(question.field, question.question));
+  }
+  const color = buildColorSpec(version.requirement.constraints);
+  const colorReview = colorReviewText({ officialSpecs: [color], colorSpecifiedByUser: color.provenance === 'user_explicit' });
+  if (colorReview) {
+    reviews.set('color', humanReview('color', `${colorReview}。${color.sourceNote ?? ''}请与客户核对可用实物色卡。`));
   }
   for (const constraint of version.requirement.constraints) {
     if ((constraint.level === 'pending' || constraint.value === null) && !reviews.has(constraint.field)) {

@@ -9,6 +9,7 @@ import type {
   Version,
 } from '../types/decisions';
 import type { DeconstructedRequirement, OfficialSpecItem, RequirementInput } from '../types/sartoria';
+import { buildColorSpec } from './colorPresentation';
 import { deconstructLocally } from './deconstructEngine';
 import { evaluateFeasibility } from './matchingEngine';
 import { generateVisualPromptPack } from './promptEngine';
@@ -42,9 +43,10 @@ export function decisionPresentation(
   requirement: DecisionRequirement,
   presentation = deconstructLocally(decisionInput(requirement), requirement.constraints),
 ): DeconstructedRequirement {
-  const color = statement(requirement, 'color');
-  const colorSpecifiedByUser = color?.state === 'explicit' || color?.state === 'confirmed';
+  const color = buildColorSpec(requirement.constraints);
+  const colorSpecifiedByUser = color.provenance === 'user_explicit';
   const officialSpecs = presentation.officialSpecs.map((spec): OfficialSpecItem => {
+    if (spec.key === 'color') return { ...spec, ...color };
     const value = statement(requirement, spec.key);
     const assertions = requirement.constraints.filter((item) => item.field === spec.key);
     const pending = assertions.find((item) => item.state === 'unknown' &&
@@ -55,9 +57,6 @@ export function decisionPresentation(
       return { ...spec, value: [...facts, '具体选项待确认'].join('，'), provenance: 'needs_human_verification',
         constraintKind: 'pending', sourceQuote: pending?.quote ?? exclusions[0]?.quote ?? null,
         sourceNote: pending?.reason ?? '已记录排除项，具体选项由顾问与客户复核。' };
-    }
-    if (spec.key === 'color' && !colorSpecifiedByUser) {
-      return { ...spec, value: '色彩待客户确认', provenance: 'needs_human_verification', sourceNote: '当前需求没有经确认的正向色彩条件。' };
     }
     if (!value) return spec;
     const label = describeRequirementValue(spec.key, value.value);
@@ -76,6 +75,9 @@ export function decisionPresentation(
     ...presentation,
     colorSpecifiedByUser,
     officialSpecs,
+    dimensions: presentation.dimensions.map((dimension) => dimension.key === 'colorSystem'
+      ? { ...dimension, value: color.value, detail: '最终按顾问与客户核定的实物色卡确认成衣用色。' }
+      : dimension),
     threeBuckets: {
       ...originalBuckets,
       userExplicit: sourcedConstraints.map(({ field, op, value, level }) =>

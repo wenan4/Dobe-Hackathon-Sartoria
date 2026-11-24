@@ -7,6 +7,7 @@ import { DECISION_CATALOG } from '../data/decisionCatalog';
 import { FABRICS } from '../data/fabrics';
 import { PATTERNS } from '../data/patterns';
 import { SCENES } from '../data/scenes';
+import { colorReviewText } from '../engine/colorPresentation';
 import type { ResolvedStageVisual } from '../engine/visualResolver';
 import type { CandidateCombination, MatchResult } from '../types/decisions';
 import type {
@@ -258,7 +259,7 @@ export function ConfiguratorStudio({
             {!deconstructed.colorSpecifiedByUser && (
               <div className="notice-row" style={{ marginTop: 10 }}>
                 <span className="status-dot dot-caution" />
-                <span>客户未指定颜色，色卡仅示意织纹，最终须线下核色。</span>
+                <span>{colorReviewText(deconstructed) ?? '客户未指定颜色'}。色卡仅示意织纹，最终须线下核色。</span>
               </div>
             )}
 

@@ -1,7 +1,8 @@
 import { PRESET_DEMO_CASES } from '../data/presetDemos';
 import { SCENES } from '../data/scenes';
 import type { Constraint } from '../types/decisions';
-import { describeRequirementValue, extractRevisionConstraints } from './requirementInterview';
+import { buildColorSpec } from './colorPresentation';
+import { extractRevisionConstraints } from './requirementInterview';
 import type {
   DeconstructErrorInfo,
   DeconstructedRequirement,
@@ -183,13 +184,8 @@ export function buildOfficialEightSpecs(input: RequirementInput, constraints?: r
 
   // Use the same sourced color decisions for the offline summary and catalog filtering.
   const observations = constraints ?? extractRevisionConstraints({ id: 'brief-1', text: input.rawNarrative }, 'initial');
-  const colors = observations.filter(({ field }) => field === 'color');
-  const blockedColor = colors.find(({ blocking }) => blocking);
-  const statedColors = colors.filter(({ value, state }) => value !== null && (state === 'explicit' || state === 'confirmed'));
-  const colorSpecifiedByUser = !blockedColor && statedColors.some(({ op }) => op === 'eq');
-  const colorDescriptions = statedColors.map(({ op, value, level }) =>
-    `${op === 'neq' ? '排除' : ''}${describeRequirementValue('color', value)}${level === 'preference' ? '（偏好）' : ''}`);
-  if (!colorSpecifiedByUser) colorDescriptions.push('成衣颜色待确认');
+  const colorSpec = buildColorSpec(observations);
+  const colorSpecifiedByUser = colorSpec.provenance === 'user_explicit';
 
   // 6. 装饰纹样
   let motif = '无特殊需求（待顾问核实是否保留素面或小巧暗花）';
@@ -284,12 +280,7 @@ export function buildOfficialEightSpecs(input: RequirementInput, constraints?: r
       sourceNote: '匹配静态模拟面料库（须线下核验米样手感）',
     },
     {
-      key: 'color',
-      label: '色彩',
-      value: colorDescriptions.join('，'),
-      provenance: colorSpecifiedByUser ? 'user_explicit' : 'needs_human_verification',
-      sourceQuote: blockedColor?.quote ?? (statedColors.length === 1 ? statedColors[0].quote : undefined),
-      sourceNote: blockedColor?.reason ?? '以客户原话核对色彩方向，最终按实物色卡核色',
+      ...colorSpec,
       ergonomicCue: !colorSpecifiedByUser ? '待线下核色' : isTwoPieceStage ? '明快上镜' : undefined,
     },
     {
