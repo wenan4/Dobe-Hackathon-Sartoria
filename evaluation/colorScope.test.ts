@@ -34,11 +34,15 @@ test('the frozen color-scope fixture keeps its original text and labels', () => 
   );
 });
 
-test.each(cases)('color scope $id', (row) => {
-  const requirement = buildLocalDecisionRequirement({
-    rawNarrative: row.text, projectName: '', clientName: '', businessType: 'private_couture',
+function interview(rawNarrative: string) {
+  return buildLocalDecisionRequirement({
+    rawNarrative, projectName: '', clientName: '', businessType: 'private_couture',
     season: 'all_season', groupSize: '', targetSceneId: '',
   });
+}
+
+test.each(cases)('color scope $id', (row) => {
+  const requirement = interview(row.text);
   const claims = roles.flatMap((role) => row[role].map((color) => ({
     role, color, value: role === 'pending' ? undefined : catalogColors.get(color),
     phrase: sourcePhrases[row.id]?.find((phrase) => phrase.includes(color)) ?? color,
@@ -85,5 +89,36 @@ test.each(cases)('color scope $id', (row) => {
         field: 'color', constraintId: blocker.id, outcome: 'unknown',
       }));
     }
+  }
+});
+
+// The eleven controls from the original replay also exercise neighboring non-color instructions.
+const controls = [
+  ['positive-image', '想做外套。颜色就按照片里的酒红色做，领子再商量。', ['eq:crimson']],
+  ['negative-image', '想做外套。不要照片里的酒红色，颜色要藏青。', ['neq:crimson', 'eq:navy']],
+  ['reapproval', '若场地够暗就用深绿。如果换不了灯也没关系，现在颜色正式定藏青。', ['eq:navy']],
+  ['condition-next-field', '如果场地太暗，我再考虑深绿。必须机洗，领子一定要驳领。', []],
+  ['conditional-exclusion', '如果灯太红，再排除酒红色。别的没有硬性要求。', []],
+  ['current-exclusion', '照片里是酒红色。这次我只借它的肩线，深绿绝对不能用。', ['neq:pine_green']],
+  ['current-later', '照片里是酒红色。这次我只借它的肩线。我们自己的颜色最后也定酒红色。', ['eq:crimson']],
+  ['only-neg', '我这单酒红色随便商量，但千万别用深绿。', ['neq:pine_green']],
+  ['scoped-material', '机洗一定要，照片只参考领口，面料排除羊毛。', []],
+  ['conflict', '这一批所有衣服都必须是酒红色。所有衣服同时必须是藏青色。', ['eq:crimson', 'eq:navy']],
+  ['component', '照片上模特穿着酒红色的上衣。我做自己的西装就照它的驳领，别用黑色。', ['neq:obsidian']],
+] as const;
+
+test.each(controls)('current order · %s', (id, text, expectedColors) => {
+  const requirement = interview(text);
+  const hard = requirement.constraints.filter(({ level }) => level === 'hard');
+  const colors = hard.filter(({ field }) => field === 'color').map(({ op, value }) => `${op}:${value}`);
+  expect(colors.toSorted()).toEqual(expectedColors.toSorted());
+  if (id === 'condition-next-field' || id === 'scoped-material') {
+    expect(hard).toContainEqual(expect.objectContaining({ field: 'care', op: 'eq', value: 'machine_wash' }));
+    expect(hard).toContainEqual(expect.objectContaining(id === 'scoped-material'
+      ? { field: 'fabric', op: 'neq', value: 'wool' } : { field: 'collar', op: 'eq', value: 'lapel' }));
+  }
+  if (id === 'conflict') {
+    expect(requirement.constraints).toContainEqual(expect.objectContaining({ field: 'color', blocking: true }));
+    expect(matchDecision(requirement).status).toBe('no_match');
   }
 });

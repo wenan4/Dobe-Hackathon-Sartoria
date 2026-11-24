@@ -18,7 +18,7 @@
 
 `npm run test:release` 逐批运行五组冻结验收，每组 24 条。命令核对候选版本并生成报告，任一放行断言失败即返回非零状态。将 `SARTORIA_RELEASE_SUITE` 设为 `1` 至 `5` 可单独复跑。设置 `SARTORIA_RELEASE_SHA` 可核验指定提交，当前源码、评分代码、样本和运行配置须与该提交一致。报告写入 `node_modules/.cache/sartoria-baseline/`，首批为 `release-<SHA>.json`，其余为 `release-<批号>-<SHA>.json`。
 
-`npm test` 包含原始 24 条简报、32 条色彩对照和七份订阅子代理的首次 Astra 回答。色彩对照按原话核验当前用色、排除、偏好与待核状态。目录外的明确必选和排除须带原话并阻断推荐，有条件的候选和普通偏好须保留原话并允许继续选配。Astra 回放在本地运行 Worker 和前端客户端，上游传输始终从冻结文件读取，项目 API 调用为零。单跑这两组可使用 `npm test -- evaluation/colorScope.test.ts evaluation/astraReplay.test.ts`。
+`npm test` 包含原始 24 条简报、32 条色彩对照、11 条跨字段控制和七份订阅子代理的首次 Astra 回答。色彩对照按原话核验当前用色、排除、偏好与待核状态。目录外的明确必选和排除须带原话并阻断推荐，有条件的候选和普通偏好须保留原话并允许继续选配。Astra 回放在本地运行 Worker 和前端客户端，上游传输始终从冻结文件读取，项目 API 调用为零。单跑色彩和 Astra 用例可使用 `npm test -- evaluation/colorScope.test.ts evaluation/astraReplay.test.ts`。
 
 在仓库根目录使用 Node.js 24，安装锁定依赖后运行 `npm exec -- vitest run evaluation/blind.test.ts`。记录评测时新版本 SHA 和冻结样本哈希。断开模型路径并清空项目历史，按相同原文和顺序分别运行纯本地基线与新版本。
 
