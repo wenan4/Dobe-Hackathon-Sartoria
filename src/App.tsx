@@ -423,7 +423,9 @@ export default function App() {
 
     appendSessionLog(
       '需求解构',
-      '完成需求访谈与目录约束整理',
+      outcome.data.engineUsed === 'llm_api'
+        ? `${outcome.data.modelUsed ?? 'gpt-6.2-astra'} 在线拆解并完成目录约束整理`
+        : '完成需求访谈与目录约束整理',
       `记录 ${next.constraints.filter((constraint) => constraint.level === 'hard').length} 条硬条件，附八项定制信息与六维审美摘要。`
     );
 
@@ -433,7 +435,9 @@ export default function App() {
     const next = { ...requirement, constraints, questions: buildClarificationQuestions(constraints) };
     const candidate = matchDecision(next).recommended;
     setRequirement(next);
-    setDeconstructed(decisionPresentation(next));
+    setDeconstructed(
+      decisionPresentation(next, deconstructed.engineUsed === 'llm_api' ? deconstructed : undefined)
+    );
     if (candidate) setConfig(candidate.config);
     setRevisionPreview(null);
     setDecisionNotice(null);

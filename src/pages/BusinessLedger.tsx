@@ -264,6 +264,7 @@ export function BusinessLedger({
                           fontFamily: 'var(--font-mono)',
                           fontVariantNumeric: 'tabular-nums',
                           fontWeight: 600,
+                          whiteSpace: 'nowrap',
                         }}
                       >
                         {rec.config ? (rec.decisionHistory ? rec.matchScore : `${rec.matchScore}% · 旧档`) : '待核'}

@@ -363,7 +363,7 @@ export function VersionHandoff({ history }: { history: DecisionHistory }) {
           <h3>待核责任</h3>
           <ul className="decision-review-list">
             {handoff.reviews.map(({ field, owner, nextStep }) => (
-              <li key={field}><strong>{owner}</strong><div>{nextStep}</div></li>
+              <li key={field}><strong>{decisionFieldLabel(field)} · {owner}</strong><div>{nextStep}</div></li>
             ))}
           </ul>
         </div>

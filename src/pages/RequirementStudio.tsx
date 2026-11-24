@@ -91,6 +91,7 @@ export function RequirementStudio({
 
   const isAnalyzing = status === 'analyzing';
   const hasResult = status === 'ready' || status === 'stale';
+  const isOnlineLlm = deconstructed.engineUsed === 'llm_api';
   const byField = (field: ConstraintField) => decisionRequirement?.constraints.filter((item) => item.field === field) ?? [];
   const dimensions = decisionRequirement ? deconstructed.dimensions.map((dimension) => {
     const fieldsByDimension: Partial<Record<typeof dimension.key, ConstraintField[]>> = {
@@ -100,7 +101,9 @@ export function RequirementStudio({
     const fields = fieldsByDimension[dimension.key];
     if (!fields) return dimension;
     const values = fields.flatMap(byField).filter(({ value }) => value !== null);
-    return { ...dimension, value: values.length ? specText(values) : '待确认' };
+    if (values.length) return { ...dimension, value: specText(values) };
+    const keepOnlineDimension = isOnlineLlm && (dimension.key !== 'colorSystem' || deconstructed.colorSpecifiedByUser);
+    return { ...dimension, value: keepOnlineDimension ? dimension.value : '待确认' };
   }) : deconstructed.dimensions;
   const quota = workerStatus?.quota;
 
@@ -518,8 +521,12 @@ export function RequirementStudio({
                       const constraints = byField(item.key);
                       const constraint = constraints[0];
                       const prov = constraint ? SPEC_STATE_META[constraint.state] : PROVENANCE_META[item.provenance ?? 'system_suggested'];
+                      const hasHardOrUnknown = constraints.some(
+                        (c) => c.level === 'hard' || c.state === 'confirmed' || c.state === 'unknown' || c.blocking
+                      );
                       const preserveReferenceCopy = decisionRequirement?.input.presetDemoId === 'official-case-6' && constraint?.state === 'suggested';
-                      const value = decisionRequirement && !preserveReferenceCopy ? specText(constraints) || '待确认' : item.value;
+                      const preserveOnlineCopy = isOnlineLlm && !hasHardOrUnknown && (item.key !== 'color' || deconstructed.colorSpecifiedByUser);
+                      const value = decisionRequirement && !preserveReferenceCopy && !preserveOnlineCopy ? specText(constraints) || '待确认' : item.value;
                       return (
                         <div key={item.key} className="spec-cell">
                           <div className="spec-cell-head">
@@ -530,7 +537,7 @@ export function RequirementStudio({
                             </span>
                           </div>
                           <div className="spec-value">{value}</div>
-                          {!decisionRequirement && item.sourceQuote && (
+                          {(!decisionRequirement || preserveOnlineCopy) && item.sourceQuote && (
                             <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
                               依据：「{item.sourceQuote}」
                             </div>
