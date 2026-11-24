@@ -14,7 +14,7 @@ import { deconstructLocally } from './deconstructEngine';
 import { evaluateFeasibility } from './matchingEngine';
 import { generateVisualPromptPack } from './promptEngine';
 import { generateProposalDraft } from './proposalEngine';
-import { describeRequirementValue, requirementFields } from './requirementInterview';
+import { describeRequirementValue, extractRevisionConstraints, requirementFields } from './requirementInterview';
 import { quantityScopeOf } from './requirementQuantity';
 
 function statement(requirement: DecisionRequirement, field: ConstraintField): Constraint | undefined {
@@ -25,6 +25,28 @@ function statement(requirement: DecisionRequirement, field: ConstraintField): Co
   const options = order.length ? order : known;
   return options.find((constraint) => constraint.state === 'confirmed') ??
     options.find((constraint) => constraint.state === 'explicit') ?? options[0];
+}
+
+function groundOnlineArchetype(requirement: DecisionRequirement, title: string): string {
+  const exclusions = requirement.constraints.filter(({ field, op, state, level }) => field === 'luster' && op === 'neq' &&
+    (state === 'confirmed' || state === 'explicit') && level !== 'pending');
+  if (!exclusions.length || exclusions.some(({ value }) => value !== 'high')) return title;
+
+  const chosenLuster = statement(requirement, 'luster');
+  if (chosenLuster?.value === 'low' && chosenLuster.state !== 'suggested') return title;
+
+  // Compact ranges in a headline allow medium sheen as well.
+  const titleForParsing = title.replace(/中低光泽|低光泽(?:至|到)中等?光泽|中等光泽/gu, '微光泽');
+  const assertsLow = extractRevisionConstraints({ id: 'archetype', text: titleForParsing }, 'initial')
+    .some(({ field, op, value }) => field === 'luster' && op === 'eq' && value === 'low');
+  if (!assertsLow) return title;
+
+  const direction = (['style', 'fabric', 'category'] as const).map((field) => {
+    const choice = statement(requirement, field);
+    return choice?.level === 'hard' && choice.state !== 'suggested' ? describeRequirementValue(field, choice.value) : '';
+  }).join('');
+  const lusterBoundary = exclusions.some(({ level }) => level === 'hard') ? '避开高光泽' : '倾向避开高光泽';
+  return `${direction || '定制成衣'} · ${lusterBoundary}`;
 }
 
 export function decisionInput(requirement: DecisionRequirement, candidate?: CandidateCombination | null): RequirementInput {
@@ -79,6 +101,8 @@ export function decisionPresentation(
   const sourcedConstraints = requirement.constraints.filter(({ state }) => state === 'confirmed' || state === 'explicit');
   return {
     ...presentation,
+    aestheticArchetype: presentation.engineUsed === 'llm_api'
+      ? groundOnlineArchetype(requirement, presentation.aestheticArchetype) : presentation.aestheticArchetype,
     colorSpecifiedByUser,
     officialSpecs,
     dimensions: presentation.dimensions.map((dimension) => dimension.key === 'colorSystem'

@@ -33,6 +33,12 @@ function createMemorySqlExecutor(): SqlExecutorLike {
 }
 
 describe('Worker extraction prompt', () => {
+  it('keeps a sheen exclusion distinct from a positive finish in the model headline', () => {
+    const titleRule = SARTORIA_SYSTEM_PROMPT.split('\n').find(line => line.includes('aestheticArchetype 标题'));
+    expect(titleRule).toContain('仅排除强反光时，中等光泽仍可用');
+    expect(titleRule).toContain('只有客户明确选择低光泽或哑光时才用相应词语命名');
+  });
+
   it('requires explicit garment quantities, named venues, and group commissions in the extracted facts', () => {
     expect(SARTORIA_SYSTEM_PROMPT).toMatch(/threeBuckets\.userExplicit[^\n]+成衣数量、具名场地和委托性质/);
     expect(SARTORIA_SYSTEM_PROMPT).toContain('包括一件、一套与多件多套');
