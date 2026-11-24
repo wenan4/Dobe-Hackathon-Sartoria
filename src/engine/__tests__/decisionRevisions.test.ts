@@ -94,6 +94,26 @@ describe('decision preview and version snapshots', () => {
     expect(before.requirement.constraints.find((item) => item.field === 'quantity')?.value).toBe(60);
   });
 
+  it('keeps documented uncertainty and its provenance when a revision restates it', () => {
+    const requirement = buildLocalDecisionRequirement({
+      ...CONFERENCE_BRIEF,
+      rawNarrative: '定制两件连衣礼服，必须炭黑色。洗护方式还没决定。',
+    });
+    const match = matchDecision(requirement);
+    const base = buildDecisionVersion({
+      projectId: 'unresolved-care', previous: null, requirement, match, candidate: match.recommended, revision: null,
+    });
+    const care = base.requirement.constraints.find((item) => item.field === 'care');
+    expect(care).toMatchObject({ level: 'pending', state: 'unknown', quote: '洗护方式还没决定' });
+
+    const { preview, branch, version } = revise(base, '色系改为酒红，洗护方式依旧待确认。', 'accept');
+    expect(preview.requestedPatch.map(({ field }) => field)).toEqual(['color']);
+    expect(preview.conflicts.map(({ field }) => field)).toEqual(['color']);
+    expect(branch.canConfirm).toBe(true);
+    expect(version.requirement.constraints.find((item) => item.field === 'care')).toEqual(care);
+    expect(version.candidate?.config.fabricId).toBe('fab-xiangyun-crimson-velvet');
+  });
+
   it('applies two revisions while retaining untouched hard constraints and frozen visuals', () => {
     const v1 = startConference();
     const hard = v1.requirement.constraints.filter((constraint) => constraint.level === 'hard');

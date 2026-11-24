@@ -230,7 +230,16 @@ function auditConfig(config: ConfigurationState, gold: readonly Triple[], catalo
     const { field, value, op } = constraint;
     if (field === 'quantity' && typeof value === 'number') {
       const ranges = [pp?.quantity, fp?.quantity];
-      if (ranges.some((range) => range && (value < range[0] || value > range[1]))) violations.add(field);
+      if (op === 'eq') {
+        if (ranges.some((range) => range && (value < range[0] || value > range[1]))) violations.add(field);
+      } else {
+        const ordered = gold.find((label) => label.field === 'quantity' && label.op === 'eq');
+        if (ordered?.value === value || ranges.some((range) => range && range[0] === value && range[1] === value)) {
+          violations.add(field);
+        } else if (!ordered && ranges.some((range) => range && range[0] <= value && value <= range[1])) {
+          unknowns.add(field);
+        }
+      }
       if (ranges.some((range) => !range)) unknowns.add(field);
       continue;
     }

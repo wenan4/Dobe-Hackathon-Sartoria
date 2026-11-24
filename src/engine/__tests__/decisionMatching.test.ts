@@ -110,6 +110,26 @@ describe('Static catalog decision matching', () => {
     expect(matchDecision({ ...requirement, mode: 'validated' })).toEqual(local);
   });
 
+  it('checks an excluded order size against the agreed quantity even if the catalog can also supply the excluded size', () => {
+    const omitted = constraint('quantity', 50, 'hard', 'neq');
+    const chosen = matchDecision(uniformRequirements).recommended!.config;
+    const actual = evaluateDecisionConfiguration(updated(constraint('quantity', 60), omitted), chosen);
+    expect(actual.status).toBe('eligible');
+    expect(evaluateDecisionConfiguration(updated(omitted), chosen).status).toBe('needs_review');
+    expect(evaluateDecisionConfiguration(updated(constraint('quantity', 50), omitted), chosen).status).toBe('rejected');
+  });
+
+  it('asks for scene evidence before clearing a venue exclusion on an unclassified set', () => {
+    const original = DECISION_CASE_REFERENCES[0].asset;
+    const candidate = evaluateDecisionConfiguration({
+      ...uniformRequirements, constraints: [constraint('scene', 'outdoor_stage', 'hard', 'neq')],
+    }, {
+      patternId: original.patternId, fabricId: original.fabricId, craftIds: original.craftIds,
+      sceneId: 'scene-studio-minimal', activeView: 'scene_look', focusedHotspotId: null,
+    });
+    expect(candidate.evidence).toContainEqual(expect.objectContaining({ field: 'scene', outcome: 'unknown' }));
+  });
+
   it('returns no match when silk and machine wash are mandatory and reruns if care is edited', () => {
     const conflict = matchDecision(updated(constraint('fabric', 'silk')));
     expect(conflict).toMatchObject({ status: 'no_match', recommended: null, alternative: null });

@@ -210,13 +210,23 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
     }
   }
 
+  const statedOrderSize = requirement.constraints.find((item) => item.field === 'quantity' &&
+    item.op === 'eq' && item.level === 'hard' && typeof item.value === 'number')?.value;
   const quantityChecks = (constraint: Constraint) => [
     { record: pattern, asset: patternAsset }, { record: fabric, asset: fabricAsset },
   ].map(({ record, asset }) => {
     const range = record?.profile.quantity;
     const value = range ? `${range[0]}–${range[1]}` : null;
+    if (constraint.op === 'neq' && typeof statedOrderSize === 'number') {
+      return checkConstraint(teamEvidence(asset), constraint, statedOrderSize,
+        statedOrderSize === constraint.value, `已确认的订单数量 ${statedOrderSize} 套`);
+    }
     const within = range && typeof constraint.value === 'number'
       && range[0] <= constraint.value && constraint.value <= range[1];
+    if (constraint.op === 'neq' && within && range[0] !== range[1]) {
+      return checkConstraint(teamEvidence(asset), constraint, null, false,
+        `模拟接单区间 ${value} 套包含排除值，实际订量待确认`);
+    }
     return checkConstraint(teamEvidence(asset), constraint, value, Boolean(within),
       range ? `模拟接单区间 ${value} 套` : '待核');
   });
@@ -247,7 +257,9 @@ function evaluate(requirement: DecisionRequirement, config: ConfigurationState) 
       case 'scene': {
         const types = sceneTypes[config.sceneId];
         const equals = types?.includes(String(constraint.value)) || constraint.value === config.sceneId;
-        return [checkConstraint(teamEvidence(patternAsset), constraint, scene?.id ?? null, equals, scene?.shortName ?? '待核')];
+        const documented = scene && (types?.length || constraint.value === scene.id);
+        return [checkConstraint(teamEvidence(patternAsset), constraint, documented ? scene.id : null, equals,
+          documented ? scene.shortName : '场景类别待核')];
       }
       case 'season':
         return [

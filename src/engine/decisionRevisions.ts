@@ -172,8 +172,13 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
   const constraints = base.requirement.constraints;
   const observations = extractRevisionConstraints(turn);
   const requested = observations.filter((next) => {
-    if (next.value === null) return isExplicitWithdrawal(next) || next.blocking ||
-      !observations.some((item) => item.field === next.field && item.value !== null);
+    if (next.value === null) {
+      if (isExplicitWithdrawal(next) || next.blocking) return true;
+      // A restatement of documented uncertainty leaves the existing condition and its source intact.
+      const alreadyPending = constraints.some((item) => item.field === next.field && item.state === 'unknown' &&
+        item.level === 'pending' && item.value === null && !item.blocking && (item.sourceTurnId || item.verifiedBy));
+      return !alreadyPending && !observations.some((item) => item.field === next.field && item.value !== null);
+    }
     return !constraints.some((item) => item.field === next.field && item.op === next.op &&
       item.value === next.value && (item.state === 'confirmed' || item.state === 'explicit') &&
       (item.level === next.level || item.level === 'hard'));
