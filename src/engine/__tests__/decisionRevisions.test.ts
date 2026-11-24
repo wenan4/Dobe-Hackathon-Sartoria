@@ -20,8 +20,9 @@ function startConference(): Version {
 }
 
 function revise(base: Version, feedback: string, option: RevisionOption) {
-  const preview = previewDecisionRevision(base, feedback)!;
-  const branch = preview.branches.find((entry) => entry.option === option)!;
+  const preview = previewDecisionRevision(base, feedback);
+  const branch = preview?.branches.find((entry) => entry.option === option);
+  if (!preview || !branch?.canConfirm) throw new Error(`Cannot confirm ${option} for ${feedback}`);
   const revision = recordDecisionRevision(preview, branch, base.createdAt);
   const version = buildDecisionVersion({
     projectId: base.projectId, previous: base, requirement: branch.requirement,
@@ -94,15 +95,20 @@ describe('decision preview and version snapshots', () => {
     expect(before.requirement.constraints.find((item) => item.field === 'quantity')?.value).toBe(60);
   });
 
-  it('retains a proposed addition on the defer branch without publishing a new requirement', () => {
+  it.each([
+    ['care', 'dry_clean', '工坊问能不能把专业干洗列为一项要求'],
+    ['scene', 'outdoor_stage', '活动组问要不要改成户外舞台演出'],
+  ])('archives a conflicting %s proposal on the defer branch', (field, value, proposal) => {
     const base = startConference();
-    const proposal = '工坊问能不能把专业干洗列为一项要求';
     const { preview, revision, version } = revise(base, `${proposal}。先把这一条挂起，等样衣送回来再定。`, 'defer');
     expect(preview.requestedPatch).toMatchObject([
-      { field: 'care', next: { op: 'eq', value: 'dry_clean', level: 'preference', quote: proposal } },
+      { field, next: { op: 'eq', value, level: 'preference', quote: proposal, sourceTurnId: preview.turn.id } },
     ]);
+    expect(preview.conflicts.map((conflict) => conflict.field)).toEqual([field]);
+    expect(preview.branches.map(({ option }) => option)).toEqual(['keep', 'defer']);
     expect(revision.requestedPatch).toEqual(preview.requestedPatch);
     expect(version.requirement).toEqual(base.requirement);
+    expect(version.candidate?.id).toBe(base.candidate?.id);
   });
 
   it('keeps documented uncertainty and its provenance when a revision restates it', () => {
@@ -246,7 +252,7 @@ describe('decision preview and version snapshots', () => {
   });
 
   it('withdraws only the named exclusion after explicit confirmation', () => {
-    const input = { ...CONFERENCE_BRIEF, rawNarrative: `${CONFERENCE_BRIEF.rawNarrative}禁止使用羊毛或醋酸。` };
+    const input = { ...CONFERENCE_BRIEF, rawNarrative: `${CONFERENCE_BRIEF.rawNarrative}禁止使用羊毛或醋酸。面料还没决定。` };
     const requirement = buildLocalDecisionRequirement(input);
     const match = matchDecision(requirement);
     const v1 = buildDecisionVersion({
@@ -260,5 +266,46 @@ describe('decision preview and version snapshots', () => {
       .map((item) => item.value);
     expect(exclusions(v1)).toEqual(['wool', 'acetate']);
     expect(exclusions(version)).toEqual(['acetate']);
+    const pending = v1.requirement.constraints.find((item) => item.field === 'fabric' && item.quote === '面料还没决定');
+    expect(pending).toMatchObject({ level: 'pending', sourceTurnId: v1.requirement.turns[0].id });
+    expect(version.requirement.constraints).toContainEqual(pending);
+  });
+
+  it('archives a confirmed change with no combination, then reopens the choice after withdrawal', () => {
+    const requirement = buildLocalDecisionRequirement({
+      ...CONFERENCE_BRIEF,
+      businessType: 'private_couture',
+      rawNarrative: '个人定制两条及地连衣裙，正式晚宴穿，面料用丝绒，风格定新中式。颜色先待选。',
+    });
+    const match = matchDecision(requirement);
+    const v1 = buildDecisionVersion({
+      projectId: 'style-withdrawal', previous: null, requirement, match, candidate: match.recommended, revision: null,
+    });
+    expect(v1.candidate?.config.fabricId).toBe('fab-xiangyun-crimson-velvet');
+    const first = revise(v1, '风格正式改定为现代风，丝绒要求照旧。', 'accept');
+    expect(first.preview.conflicts.map(({ field }) => field)).toEqual(['style']);
+    expect(first.branch.canConfirm).toBe(true);
+    expect(first.version).toMatchObject({ candidate: null, proposal: null, promptPack: null, match: { status: 'no_match' } });
+    expect(first.version.requirement.constraints).toContainEqual(expect.objectContaining({
+      field: 'style', value: 'modern', level: 'hard', sourceTurnId: first.preview.turn.id,
+    }));
+
+    const second = revise(first.version, '撤回现代风格的限制，也不用把新中式设成必选，风格看样再定。', 'accept');
+    expect(second.preview.conflicts).toEqual([]);
+    expect(second.preview.requestedPatch).toMatchObject([
+      { previous: { value: 'modern' }, next: { withdraws: { op: 'eq', value: 'modern' } } },
+      { previous: null, next: { withdraws: { op: 'eq', value: 'new_chinese' } } },
+    ]);
+    expect(second.branch.canConfirm).toBe(true);
+    expect(second.version.candidate?.config.fabricId).toBe('fab-xiangyun-crimson-velvet');
+    expect(second.version.requirement.constraints.filter((item) => item.field === 'style')).toEqual([
+      expect.objectContaining({ value: null, level: 'pending', withdraws: { op: 'eq', value: 'modern' } }),
+      expect.objectContaining({ value: null, level: 'pending', quote: '风格看样再定', sourceTurnId: second.preview.turn.id }),
+    ]);
+    expect(second.version.requirement.constraints.filter(({ field }) => field !== 'style'))
+      .toEqual(v1.requirement.constraints.filter(({ field }) => field !== 'style'));
+    const history = [v1, first.version, second.version].reduce(appendDecisionVersion, emptyDecisionHistory());
+    expect(history.versions).toEqual([v1, first.version, second.version]);
+    expect(buildDecisionMarkdown(history.versions[1], v1)).toContain('暂无满足硬条件的组合');
   });
 });

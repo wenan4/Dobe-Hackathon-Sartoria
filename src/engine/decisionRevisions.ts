@@ -123,8 +123,12 @@ function applyPatch(constraints: Constraint[], requested: Constraint[], verified
   return ordered.reduce((current, next) => {
     if (isExplicitWithdrawal(next)) {
       if (!current.some((item) => targetsWithdrawal(next, item))) return current;
-      return [...current.filter((item) => !targetsWithdrawal(next, item) &&
-        (next.field !== item.field || item.value !== null)), next];
+      const retained = current.filter((item) => {
+        if (targetsWithdrawal(next, item)) return false;
+        if (item.field !== next.field || item.value !== null) return true;
+        return Boolean(next.withdraws && !item.blocking && hasRecordedSource(item));
+      });
+      return [...retained, next];
     }
     if (next.level === 'preference' && current.some((item) => item.level === 'hard' && conflictsWith(item, next))) {
       return current;
@@ -142,7 +146,7 @@ function applyPatch(constraints: Constraint[], requested: Constraint[], verified
 }
 
 function recordPendingObservations(constraints: Constraint[], observations: Constraint[], accepted: Constraint[]): Constraint[] {
-  const pending = observations.filter((next) => !accepted.some((item) => item.field === next.field && item.level !== 'preference') &&
+  const pending = observations.filter((next) => !accepted.some((item) => item.field === next.field && item.level === 'hard') &&
     !constraints.some((item) => item.field === next.field && isNonblockingUnknown(item) && hasRecordedSource(item)));
   if (!pending.length) return constraints;
   const fields = new Set(pending.map(({ field }) => field));
@@ -199,13 +203,13 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     (next.value === null || !constraints.some((item) => item.field === next.field && item.op === next.op &&
       item.value === next.value && (item.state === 'confirmed' || item.state === 'explicit') &&
       (item.level === next.level || item.level === 'hard'))));
-  const requestedPatch = requested.map((next) => ({
-    field: next.field,
-    previous: constraints.find((item) => isExplicitWithdrawal(next) ? targetsWithdrawal(next, item)
-      : item.field === next.field && (conflictsWith(item, next) || item.op === next.op && item.value === next.value)) ??
-      constraints.find((item) => item.field === next.field && item.value === null) ?? null,
-    next,
-  }));
+  const requestedPatch = requested.map((next) => {
+    const previous = isExplicitWithdrawal(next)
+      ? constraints.find((item) => targetsWithdrawal(next, item))
+      : constraints.find((item) => item.field === next.field && (conflictsWith(item, next) || item.op === next.op && item.value === next.value)) ??
+        constraints.find((item) => item.field === next.field && item.value === null);
+    return { field: next.field, previous: previous ?? null, next };
+  });
   const blocked = new Set<string>();
   const contradictory = new Set<ConstraintField>();
   const conflicts: RevisionConflict[] = [];

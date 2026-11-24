@@ -269,8 +269,21 @@ async function verifyLocal() {
   assert.equal(foundOriginal, true);
   const pending = await verifyPendingVersions();
   const rosterQuantity = await verifySpokenOrder();
+  await verifyConflictingVenue();
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ conference, case6: case6.version.candidate.config.patternId, case3: case3.version.candidate.config.patternId, sameNameProjects: 2, pending, rosterQuantity, blockedOrigins: [...new Set(external)] }));
+  console.log(JSON.stringify({ conference, case6: case6.version.candidate.config.patternId, case3: case3.version.candidate.config.patternId, sameNameProjects: 2, pending, rosterQuantity, venueConflictBlocked: true, blockedOrigins: [...new Set(external)] }));
+}
+
+async function verifyConflictingVenue() {
+  await click(page, '新建需求');
+  const text = '这次我给自己订一套两件式演出服。剧组说这场演出的地点必须在户外，也必须是室内的。';
+  await page.getByLabel('客户原话').fill(text);
+  await analyze();
+  await assertText(region('必须满足'), '户外舞台');
+  await assertText(region('必须满足'), '室内演出');
+  await click(page, '下一步：进入场景选配');
+  await assertText(region('方案对比'), /暂无满足全部硬条件的组合/);
+  assert.equal(await region('方案对比').getByRole('button', { name: '选用此方案' }).count(), 0);
 }
 
 async function verifySpokenOrder() {

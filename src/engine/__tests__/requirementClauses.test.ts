@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { splitRequirementClauses } from '../requirementClauses';
+import { activeOrderClauses, splitRequirementClauses } from '../requirementClauses';
 
 describe('punctuation and spoken clause boundaries', () => {
+  it('switches orders only when a change of topic introduces a new garment order', () => {
+    const message = '上一件要求室外演出。换个话题，这次要不要退样还没定。';
+    expect(activeOrderClauses(splitRequirementClauses(message))).toEqual(splitRequirementClauses(message));
+    const changed = '演出用的要立领。换个话题，现在订做一套通勤西装。';
+    expect(activeOrderClauses(splitRequirementClauses(changed)).map((c) => c.text)).toEqual(['现在订做一套通勤西装']);
+  });
+  it('keeps a short finish requirement separate from the next pending decision', () => {
+    expect(splitRequirementClauses('面料选纯色 哑光 工坊尚未提供洗标').map(({ text }) => text))
+      .toEqual(['面料选纯色', '哑光', '工坊尚未提供洗标']);
+  });
+
   it('separates chat clauses while preserving original quotes, spaced quantities and measurements', () => {
     const raw = '  首批定 ４０　套 颜色要藏青，版型选 H 型。袖长增加 2 cm。';
     const clauses = splitRequirementClauses(raw);
