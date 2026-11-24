@@ -247,6 +247,7 @@ const PROPOSED_REQUIREMENT = /^(?:把|将)\s*(.{1,32}?)\s*(?:加(?:入|进|成|�
 const EVIDENCE_DOCUMENT = /(?:依据|证据|证明|报告|说明|证书|标签|检测|测试)(?:材料|文件)?$/;
 const CANCEL_PROPOSED_CHANGE = /(?:取消|撤销|撤回|收回|不采纳|不批准)(?:刚才|本次|这次|这项|那项|这条).{0,18}(?:改动|改稿|变更|调整|修改|提议|建议|请求)/;
 const CHANGE = /(?:改回(?:成|为)?|换回(?:成|为)?|改成|改为|改定为|换成|换为|替换为|调整为|调整成|调整到|追加至|加到|增至|增加到|减至|减到|缩减到|提高到|降到|改用|换用|改做|(?<![修更篡])改(?!良|进|善|造|版|动|编|过|写|稿)(?=\S))/;
+const WRAPPED_SWAP = /(?<=^(?:把|将).{1,16})换(?=\s*\S)/;
 const ALTERNATIVE = /(?:或(?:者|是)?|还是|二选一|择一|任选)/;
 const TENTATIVE_CHANGE = /(?:想(?:要|先|试着)?|考虑(?:先)?|试着)\s*$/;
 function patternsFor(field: ConstraintField, segment: string, inheritsStage = false): FieldMatch[] {
@@ -401,15 +402,27 @@ function nearbyLanguage(target: string, current: LocatedField, anchors: LocatedF
   return { prefix, suffix, trailing: trailingStance(suffix, last.field), statusScope: prefix + target.slice(current.start, current.end) + suffix };
 }
 
-function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision', inheritsStage = false): Observation[] {
+function reportedSwap(directive: string, inheritsStage: boolean): RegExpExecArray | null {
+  const swap = WRAPPED_SWAP.exec(directive);
+  if (!swap) return null;
+  const previous = locateRequirementValues(directive.slice(1, swap.index), inheritsStage);
+  const replacement = locateRequirementValues(directive.slice(swap.index + swap[0].length).trimStart(), inheritsStage);
+  return previous.some(({ field, matches }) => matches.length === 1 &&
+    replacement.some((group) => group.field === field && group.matches.some(({ start }) => start === 0))) ? swap : null;
+}
+
+function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision', inheritsStage = false, nextCancelsProposal = false): Observation[] {
   const untouched = /(?:其余|其他|其它|剩下(?:的)?).*$/.exec(segment);
   let clause = untouched && PROTECTED.test(untouched[0]) ? segment.slice(0, untouched.index).trim() : segment;
-  const history = HISTORICAL_LEAD.exec(clause) ?? HISTORICAL_REPORT.exec(clause) ?? HISTORICAL_INTENT.exec(clause) ??
+  const priorIntent = HISTORICAL_INTENT.exec(clause);
+  const history = HISTORICAL_LEAD.exec(clause) ?? HISTORICAL_REPORT.exec(clause) ?? priorIntent ??
     HISTORICAL_ORDER.exec(clause) ?? LOANED_SAMPLE.exec(clause);
+  let canceledProposal = false;
   if (history) {
     const backgroundEnd = history.index + history[0].length;
     const current = CURRENT_CONTEXT.exec(clause.slice(backgroundEnd));
     if (current) clause = clause.slice(backgroundEnd + current.index);
+    else if (nextCancelsProposal && history === priorIntent && CHANGE.test(clause.slice(backgroundEnd))) canceledProposal = true;
     else {
       const earlier = clause.slice(0, history.index).trimEnd();
       if (!CURRENT_CONTEXT.test(earlier)) return [];
@@ -425,11 +438,11 @@ function readSegment(segment: string, mode: 'initial' | 'revision' = 'revision',
   const action = question ? clause.slice(question.index + question[0].length).trimStart() : clause;
   const newRequirement = question ? PROPOSED_REQUIREMENT.exec(action)?.[1] : undefined;
   const directive = newRequirement ?? action;
-  const change = CHANGE.exec(directive);
+  const change = CHANGE.exec(directive) ?? (question ? reportedSwap(directive, inheritsStage) : null);
   const changeLead = change ? directive.slice(0, change.index) : '';
   const wrappedChange = change && /^(?:把|将).{1,16}$/.test(changeLead);
   if (question && (EVIDENCE_DOCUMENT.test(directive) || !newRequirement && !wrappedChange && !PROPOSED_ACTION.test(action))) return [];
-  const proposal = Boolean(question) || PREFERENCE.test(changeLead) || TENTATIVE_CHANGE.test(changeLead);
+  const proposal = Boolean(question) || canceledProposal || PREFERENCE.test(changeLead) || TENTATIVE_CHANGE.test(changeLead);
   const negativeChange = /(?:不要|不能|不得|不许|别|不)(?:再)?(?:(?:把|将|从).{0,12})?$/.test(changeLead);
   const offset = change ? change.index + change[0].length : 0;
   const target = directive.slice(offset);
@@ -632,9 +645,12 @@ export function extractRevisionConstraints(turn: RequirementTurn, mode: 'initial
   let stageStart: number | null = null;
   const observations = clauses.flatMap((clause, index) => {
     const previous = clauses[index - 1];
+    const next = clauses[index + 1];
+    const nextCancelsProposal = mode === 'revision' && Boolean(next && CANCEL_PROPOSED_CHANGE.test(next.text) &&
+      /^[，,；;。！？!? \t]+$/u.test(turn.text.slice(clause.end, next.start)));
     const hasSubject = namesStageSubject(clause.text);
     const continuesStage = stageStart !== null && !hasSubject && stageLocations(clause.text, true).length > 0;
-    const found = readSegment(clause.text, mode, continuesStage).filter((item) =>
+    const found = readSegment(clause.text, mode, continuesStage, nextCancelsProposal).filter((item) =>
       !(item.value === null && references[index].some(({ observation }) => observation.field === item.field)) &&
       (item.reason !== REFERENCE_REASON || !references[index + 1]?.some(({ observation }) => observation.field === item.field)) &&
       !(item.level === 'preference' && item.op === 'eq' && supersededPreferences.some(({ observation, supersedes }) =>

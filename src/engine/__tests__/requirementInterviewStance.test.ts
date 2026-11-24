@@ -128,6 +128,9 @@ describe('requirement stance and scope', () => {
     expect(read('原本想用绯红现在正式确认用藏青。')).toMatchObject([
       { field: 'color', value: 'navy', level: 'hard', quote: '现在正式确认用藏青' },
     ]);
+    expect(read('版师问要不要把立领换洗后送去干洗。')).toEqual([]);
+    expect(read('采购原先打算换回交领。现在讨论交期。')).toEqual([]);
+    expect(read('采购原先打算换回交领。撤回这项调整。', 'initial')).toEqual([]);
   });
 
   it('preserves targeted removals and the new unresolved status of the same field', () => {
