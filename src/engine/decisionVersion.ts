@@ -40,7 +40,7 @@ export function decisionInput(requirement: DecisionRequirement, candidate?: Cand
 
 export function decisionPresentation(
   requirement: DecisionRequirement,
-  presentation = deconstructLocally(decisionInput(requirement)),
+  presentation = deconstructLocally(decisionInput(requirement), requirement.constraints),
 ): DeconstructedRequirement {
   const color = statement(requirement, 'color');
   const colorSpecifiedByUser = color?.state === 'explicit' || color?.state === 'confirmed';
