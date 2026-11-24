@@ -178,6 +178,59 @@ describe('the offline requirement interview', () => {
     ]);
   });
 
+  it('distinguishes clothing purchases from attachment counts and buyers from venue requirements', () => {
+    const observations = extractRevisionConstraints({ id: 'documents', text: '商务接待组团体订制十八套正装。两份补充协议注明外套细节。穿去小剧场里演奏。' });
+    expect(observations.filter(({ field }) => ['businessType', 'quantity', 'scene'].includes(field))).toMatchObject([
+      { field: 'businessType', value: 'corporate_uniform' },
+      { field: 'quantity', value: 18 },
+      { field: 'scene', value: 'indoor_performance' },
+    ]);
+  });
+
+  it('records optional references and an open care decision without setting concrete constraints', () => {
+    const result = extractRevisionConstraints({
+      id: 'optional', text: '深蓝暂时仅供参考，交领先列为备选。洗护方式尚未确定。',
+    });
+    expect(result).toMatchObject([
+      { field: 'collar', state: 'unknown', value: null, quote: '交领先列为备选' },
+      { field: 'color', state: 'unknown', value: null, quote: '深蓝暂时仅供参考' },
+      { field: 'care', state: 'unknown', value: null, quote: '洗护方式尚未确定' },
+    ]);
+    expect(result.some(({ blocking }) => blocking)).toBe(false);
+  });
+
+  it('keeps component specifications attached to one two-piece order', () => {
+    const result = extractRevisionConstraints({
+      id: 'components', text: '订六套两件套。外套用交领，长裙选纯色且无图案。不能带去干洗。',
+    });
+    expect(result).toMatchObject([
+      { field: 'quantity', value: 6 },
+      { field: 'category', value: 'two_piece' },
+      { field: 'patternStructure', value: 'two_piece' },
+      { field: 'collar', value: 'cross_open' },
+      { field: 'motif', value: 'plain' },
+      { field: 'care', op: 'neq', value: 'dry_clean' },
+    ]);
+  });
+
+  it('resolves a restored catalog color and optical finish while carrying forward confirmed constraints', () => {
+    const result = extractRevisionConstraints({
+      id: 'restoration', text: '色调换回烟银墨黛，光泽从低反光改成柔润微光。领型继续按已经确认的立领做。',
+    });
+    expect(result).toMatchObject([
+      { field: 'color', value: 'stone_gray', level: 'hard' },
+      { field: 'luster', value: 'medium', level: 'hard' },
+    ]);
+  });
+
+  it('recognizes a woven motif as the target of a direct exclusion', () => {
+    const result = extractRevisionConstraints({ id: 'woven', text: '成衣做连身礼服，不要织在布面上的细小暗纹。' });
+    expect(result).toMatchObject([
+      { field: 'category', value: 'dress' },
+      { field: 'motif', op: 'neq', value: 'subtle_jacquard' },
+    ]);
+  });
+
   it('handles compact workplace phrasing and coordinated exclusions without reversing polarity', () => {
     const observations = extractRevisionConstraints({
       id: 'workplace',
@@ -276,6 +329,16 @@ describe('the strict requirement response boundary', () => {
       state: 'suggested', level: 'preference', value: 'navy', reason: '设计建议',
     });
     expect(parseRequirementResponse(chosenColor, input)).toMatchObject({ ok: false });
+  });
+
+  it('rejects a model promoting a source color reference into a customer requirement', () => {
+    const input = { ...corporateContext, rawNarrative: '深蓝暂时仅供参考。' };
+    const response = makeModelResponse(input);
+    expect(parseRequirementResponse(response, input)).toMatchObject({ ok: true });
+    Object.assign(response.constraints.find(({ field }) => field === 'color')!, {
+      state: 'explicit', level: 'hard', value: 'navy', quote: '深蓝', reason: null,
+    });
+    expect(parseRequirementResponse(response, input)).toMatchObject({ ok: false });
   });
 
   it('derives a blocking hard unknown from trusted raw text after schema validation', () => {

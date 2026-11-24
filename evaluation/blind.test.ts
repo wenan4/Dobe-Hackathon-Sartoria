@@ -362,7 +362,7 @@ test('distinguishes missing revision conflict annotations from explicit expectat
 function scoreRevisions(fixture: Fixture, initial: Version, assumeNoConflictsWhenOmitted: boolean) {
   const rows: {
     turn: string; decision: string; preview: boolean; conflicts: boolean | null; patch: boolean; stored: boolean;
-    invariant: boolean; preservedExistingHard: boolean; expectedState: boolean;
+    invariant: boolean; preservedExistingHard: boolean; preservedExistingPending: boolean; expectedState: boolean;
     roundTrip: boolean; archiveRoundTrip: boolean; reviewOnly: boolean; reason: string | null;
     catalogOutcome: CatalogExpectation['outcome'] | null; catalog: boolean | null;
   }[] = [];
@@ -420,7 +420,13 @@ function scoreRevisions(fixture: Fixture, initial: Version, assumeNoConflictsWhe
       return sameSet(actualHard.filter((item) => item.field === field).map(signature),
         beforeHard.filter((item) => item.field === field).map(signature));
     });
-    const invariant = preservedExistingHard && sameSet(
+    const knownPending = (version: Version) => version.requirement.constraints
+      .filter((item) => preservedFields.includes(item.field) && item.state === 'unknown' &&
+        (item.sourceTurnId !== null || item.verifiedBy !== null))
+      .map((item) => JSON.stringify([item.field, item.sourceTurnId, item.quote, item.blocking, item.withdraws]));
+    const pendingAfter = new Set(knownPending(actual));
+    const preservedExistingPending = knownPending(before).every((source) => pendingAfter.has(source));
+    const invariant = preservedExistingPending && preservedExistingHard && sameSet(
       actualHard.filter(({ field }) => preservedFields.includes(field)).map(tripleKey),
       step.hard.filter(({ field }) => preservedFields.includes(field)).map(tripleKey),
     );
@@ -447,7 +453,7 @@ function scoreRevisions(fixture: Fixture, initial: Version, assumeNoConflictsWhe
     );
     const roundTrip = archiveRoundTrip && initiallySaveable && Boolean(before.candidate && actual.candidate);
     rows.push({ turn: step.id, decision: revision.decision, preview: Boolean(preview && previewSafe), patch, conflicts,
-      stored, invariant, preservedExistingHard, expectedState, roundTrip, archiveRoundTrip,
+      stored, invariant, preservedExistingHard, preservedExistingPending, expectedState, roundTrip, archiveRoundTrip,
       reviewOnly: !initial.candidate || !before.candidate || !actual.candidate, reason,
       catalogOutcome: step.catalog?.outcome ?? null, catalog: currentCatalogExpectation(step.catalog, actual.match, actual.candidate) });
   }
@@ -580,6 +586,7 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
         archiveRoundTrips: revisionSteps.filter(({ archiveRoundTrip }) => archiveRoundTrip).length,
         reviewOnlyRoundTrips: revisionSteps.filter(({ archiveRoundTrip, reviewOnly }) => archiveRoundTrip && reviewOnly).length,
         preservedExistingHard: revisionSteps.filter(({ preservedExistingHard }) => preservedExistingHard).length,
+        preservedExistingPending: revisionSteps.filter(({ preservedExistingPending }) => preservedExistingPending).length,
         conflictAnnotations: {
           passed: revisionSteps.filter(({ conflicts }) => conflicts === true).length,
           failed: revisionSteps.filter(({ conflicts }) => conflicts === false).length,
