@@ -10,8 +10,9 @@ const DOCUMENT_AFTER_PORTION = '(?![^，,；;。！？!?、]{0,4}(?:文件|单�
 const ORDER_UNIT = `(?:套(?:装)?|件|身|(?:份${DOCUMENT_AFTER_PORTION}|条)${GARMENT_AFTER_CLASSIFIER})(?![式套])`;
 const QUANTITY = new RegExp(`${COUNT_START}(${NUMBER})\\s*${ORDER_UNIT}`, 'g');
 const SINGLE_GARMENT = new RegExp(`(?:做|订|定做|订制|定制)\\s*([件条])(?![式套])${GARMENT_AFTER_CLASSIFIER}`);
-const PERSON_COUNT = new RegExp(`${COUNT_START}(${NUMBER})\\s*(?:个人|人(?!均|手)|名|位|个(?=员工|同事|成员|职工|职员|队员|老师|学生))`, 'g');
-const ALLOCATION_ACTOR = '(?:每(?:一)?(?:人|位|个(?:人)?)|人[均手]|一(?:人|位)|各(?:人|自)?)';
+const PERSON_ROLE = '(?:员工|同事|职工|职员|工作人员|接待人员|礼宾人员|技术人员|成员|队员|老师|学生|演员|志愿者|售货员|服务员|组员)';
+const PERSON_COUNT = new RegExp(`${COUNT_START}(${NUMBER})\\s*(?:个人|人(?!均|手)|名|位|个(?=${PERSON_ROLE}))`, 'g');
+const ALLOCATION_ACTOR = `(?:每(?:一)?(?:人|位|名|个(?:人)?)(?:\\s*${PERSON_ROLE})?|人[均手]|一(?:人|位)|各(?:人|自)?)`;
 const ALLOCATION_ACTION = '(?:\\s|都|也|只|要|得|是|先|统一|分别|配(?:发|备|给)?|发(?:放|给)?|领(?:取|用)?|拿|分(?:到|发)?|订(?:做|制)?|定(?:做|制)?|做|备|给|选(?:择)?)';
 const UNCERTAIN_LEAD = '(?:大约|约(?:有|为)?|大概|差不多|至少|至多|最多|最少|不[超多]过|不[少低]于|超过|不足)';
 const OPTIONAL_ALLOCATION = `(?:${UNCERTAIN_LEAD}|可(?:以)?|可能|尽量|希望|优先)`;
@@ -25,7 +26,7 @@ const ALLOCATION = new RegExp(
 const SINGLE_ALLOCATION = new RegExp(`${ALLOCATION_LEAD}[件条](?![式套])${GARMENT_AFTER_CLASSIFIER}`, 'g');
 const UNCERTAIN_HEADCOUNT = new RegExp(`(?:${UNCERTAIN_LEAD}|${NUMBER}\\s*${COUNT_RANGE})\\s*$`);
 const uncertainAllocation = new RegExp(OPTIONAL_ALLOCATION);
-const ROSTER_SUFFIX = /^(?:\s|的|在岗|到岗|参加|出席|员工|同事|职工|职员|成员|队员|老师|学生|演员|志愿者|工作人员|接待人员|礼宾人员|售货员|服务员|组员|，|,|；|;)*$/;
+const ROSTER_SUFFIX = new RegExp(`^(?:\\s|的|在岗|到岗|参加|出席|${PERSON_ROLE}|，|,|；|;)*$`);
 const LABELED_QUANTITY = new RegExp(`(?:套数|件数|订购数量|定制数量|数量)\\s*(?:合计|共计|是|为|共|[:：=])?\\s*(${NUMBER})(?!\\s*(?:套|件|身|份|条|[${DIGITS}]))`);
 
 interface QuantityMatch {

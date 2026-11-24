@@ -11,12 +11,22 @@ describe('garment requirements from colloquial brief wording', () => {
     ]);
   });
 
+  it('uses a personnel role to identify a per-person allocation', () => {
+    const text = '采购确认27名员工，每位员工统一配两套。';
+    expect(extractRevisionConstraints({ id: 'employees', text })).toMatchObject([
+      { field: 'businessType', value: 'corporate_uniform', level: 'hard' },
+      { field: 'quantity', value: 54, quote: '采购确认27名员工，每位员工统一配两套', sourceTurnId: 'employees' },
+    ]);
+  });
+
   it.each([
     '有同事要换装，每人领一身西装。',
+    '名单未定，每位员工统一配两套。',
     '报名的有三十位。每人配一套西服。',
     '有二十到二十五位，每人配一身西装。',
     '到岗十名职员，每人至少两套制服。',
     '接待班有十八名职工，每人领一到两身西装。',
+    '已经到了十八位临时职员，每位职员可领两套制服。',
     '同事人手做件外套。',
   ])('withholds a total unless a headcount and allocation both identify it: %s', (text) => {
     expect(extractRevisionConstraints({ id: 'unconfirmed-order-size', text })
@@ -26,6 +36,16 @@ describe('garment requirements from colloquial brief wording', () => {
   it('keeps a stated order total alongside allocation wording', () => {
     const constraints = extractRevisionConstraints({ id: 'explicit-total', text: '补十九身西服，人手领一身。' });
     expect(constraints.filter(({ field }) => field === 'quantity')).toMatchObject([{ value: 19, level: 'hard' }]);
+  });
+
+  it('asks for confirmation when the headcount and allocation conflict with an explicit order total', () => {
+    const text = '确认十名职员每人配两套西服合计十八套。';
+    const result = extractRevisionConstraints({ id: 'inconsistent-totals', text });
+    expect(result.filter(({ field }) => field === 'quantity')).toMatchObject([
+      { value: 20, level: 'hard' },
+      { value: 18, level: 'hard' },
+      { value: null, blocking: true },
+    ]);
   });
 
   it('reads split-wear design, hem height and sleeve mobility as properties of one outfit', () => {
