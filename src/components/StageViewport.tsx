@@ -5,7 +5,6 @@ import type {
   ConfigurationState,
   CraftAsset,
   FabricAsset,
-  MatchExplanation,
   PatternAsset,
   SceneEnvironment,
 } from '../types/sartoria';
@@ -20,7 +19,7 @@ interface StageViewportProps {
   scenes: SceneEnvironment[];
   matchedSceneIds: string[];
   config: ConfigurationState;
-  match: MatchExplanation;
+  ruleScore: number;
   visual: ResolvedStageVisual;
   changeFeedback: string | null;
   onChangeView: (view: ConfigurationState['activeView']) => void;
@@ -36,7 +35,7 @@ export function StageViewport({
   scenes,
   matchedSceneIds,
   config,
-  match,
+  ruleScore,
   visual,
   changeFeedback,
   onChangeView,
@@ -64,7 +63,8 @@ export function StageViewport({
           <span style={{ color: 'var(--ink-muted)' }}>·</span>
           <span>{scene.shortName}</span>
           <span style={{ color: 'var(--ink-muted)' }}>·</span>
-          <span>契合 {match.overallScore}%</span>
+          <span>规则匹配分 {ruleScore}</span>
+          {config.activeView === 'scene_look' && !visual.isExactPhotographicVariant && <span>模拟场景参考图</span>}
         </div>
 
         <div className="segmented" role="tablist" aria-label="视图切换">

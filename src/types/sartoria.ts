@@ -1,3 +1,5 @@
+import type { DecisionHistory } from './decisions';
+
 export type BusinessType = 'private_couture' | 'corporate_uniform';
 export type SeasonType = 'spring' | 'summer' | 'autumn' | 'winter' | 'all_season';
 export type StylePackId = 'shanghai-haipai' | 'minimal-executive';
@@ -407,11 +409,12 @@ export interface LedgerRecord {
   matchedCaseIds: string[];
   requirementInput: RequirementInput;
   deconstructed: DeconstructedRequirement;
-  config: ConfigurationState;
-  proposal: ProposalDraft;
-  promptPack: VisualPromptPack;
+  config: ConfigurationState | null;
+  proposal: ProposalDraft | null;
+  promptPack: VisualPromptPack | null;
   specialistNotes: string;
   auditLogs: AuditLogEntry[];
+  decisionHistory?: DecisionHistory;
 }
 
 export type EngineMode = 'online_worker' | 'local_rules';

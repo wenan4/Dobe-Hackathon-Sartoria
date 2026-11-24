@@ -1,5 +1,36 @@
 import type { PatternAsset } from '../types/sartoria';
 
+const haipaiStandSuit: PatternAsset = {
+  id: 'pat-haipai-suit-ensemble',
+  code: 'SFG-PT-201',
+  name: '浦江新韵 · 海派立领男女团体职业套装',
+  shortSpec: '建筑感立体正装 · 男女同源立领 · S–4XL 套码',
+  stylePackId: 'shanghai-haipai',
+  businessType: 'corporate_uniform',
+  category: '金融 / 涉外团体职业服',
+  silhouette: '建筑感微收腰正装廓形（男女同源视觉体系）',
+  collarType: '男款海派小立领；女款改良一字弧立领',
+  shoulderType: '轻薄马尾衬立体建筑肩（久穿不塌）',
+  lengthRatio: '标准商务正装衣长至臀中下沿',
+  easeAllowance: '优化后背与袖山活动余量，兼顾久坐与高频礼宾接待',
+  fitGuidance: '覆盖 20–500 人企业团单套码量体，平衡国际金融权威感与上海海派识别度',
+  suitableScenes: ['scene-lujiazui-summit', 'scene-bund-protocol', 'scene-studio-minimal'],
+  styleTags: ['团体职业服', '金融峰会', '涉外礼宾', '海派立领'],
+  seasonFit: ['spring', 'autumn', 'winter', 'all_season'],
+  usageStandard: '团装推荐搭配 245–265g/m² 抗皱精纺羊毛或羊毛真丝混纺。',
+  baseLeadDays: 22,
+  blueprintConfig: {
+    silhouetteType: 'suit_ensemble',
+    collarStyle: 'mandarin_hidden',
+    closureStyle: 'hidden_placket',
+    hemLength: 'tailored_suit',
+    shoulderLine: 'architectural',
+    easeHighlight: '团装套码标准 · 后背久坐舒展余量',
+  },
+  description:
+    '上海服装集团团体职业服旗舰版型，在利落国际西装剪裁中融入低调海派立领，彰显城市级涉外与金融团队风貌。',
+};
+
 export const PATTERNS: PatternAsset[] = [
   {
     id: 'pat-official-cross-collar-silk',
@@ -156,36 +187,7 @@ export const PATTERNS: PatternAsset[] = [
     description:
       '去除冗余装饰，以自然落肩化解溜肩生硬感，配合香云纱温润哑光肌理展现内敛低调的高级松弛美。',
   },
-  {
-    id: 'pat-haipai-suit-ensemble',
-    code: 'SFG-PT-201',
-    name: '浦江新韵 · 海派立领/驳领男女团体职业套装',
-    shortSpec: '建筑感立体正装 · 男女同源立领 · S–4XL 套码',
-    stylePackId: 'shanghai-haipai',
-    businessType: 'corporate_uniform',
-    category: '金融 / 涉外团体职业服',
-    silhouette: '建筑感微收腰正装廓形（男女同源视觉体系）',
-    collarType: '男款海派小立领/暗门襟驳领；女款改良一字弧立领',
-    shoulderType: '轻薄马尾衬立体建筑肩（久穿不塌）',
-    lengthRatio: '标准商务正装衣长至臀中下沿',
-    easeAllowance: '优化后背与袖山活动余量，兼顾久坐与高频礼宾接待',
-    fitGuidance: '覆盖 20–500 人企业团单套码量体，平衡国际金融权威感与上海海派识别度',
-    suitableScenes: ['scene-lujiazui-summit', 'scene-bund-protocol', 'scene-studio-minimal'],
-    styleTags: ['团体职业服', '金融峰会', '涉外礼宾', '海派立领'],
-    seasonFit: ['spring', 'autumn', 'winter', 'all_season'],
-    usageStandard: '团装推荐搭配 245–265g/m² 抗皱精纺羊毛或羊毛真丝混纺。',
-    baseLeadDays: 22,
-    blueprintConfig: {
-      silhouetteType: 'suit_ensemble',
-      collarStyle: 'mandarin_hidden',
-      closureStyle: 'hidden_placket',
-      hemLength: 'tailored_suit',
-      shoulderLine: 'architectural',
-      easeHighlight: '团装套码标准 · 后背久坐舒展余量',
-    },
-    description:
-      '上海服装集团团体职业服旗舰版型，在利落国际西装剪裁中融入低调海派立领，彰显城市级涉外与金融团队风貌。',
-  },
+  haipaiStandSuit,
   {
     id: 'pat-haipai-gown-column',
     code: 'SFG-PT-202',
@@ -245,5 +247,16 @@ export const PATTERNS: PatternAsset[] = [
       easeHighlight: '扩展风格包 · 无衬轻盈商务',
     },
     description: '扩展风格包示例版型，体现平台按不同企业审美体系灵活扩展的资产架构。',
+  },
+  {
+    ...haipaiStandSuit,
+    id: 'pat-haipai-suit-ensemble-lapel',
+    code: 'SFG-PT-201-L',
+    name: '浦江新韵 · 暗门襟平驳领团体职业套装',
+    shortSpec: '建筑感立体正装 · 平驳领暗门襟 · S–4XL 套码',
+    collarType: '平驳领 · 暗门襟无外露纽扣',
+    styleTags: ['团体职业服', '金融峰会', '涉外礼宾', '暗门襟驳领'],
+    blueprintConfig: { ...haipaiStandSuit.blueprintConfig, collarStyle: 'notch_lapel' },
+    description: '将 SFG-PT-201 原模拟版型列出的暗门襟驳领选项单列为企划结构。沿用原套装轮廓、活动余量和适用范围。',
   },
 ];

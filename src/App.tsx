@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoundaryModal } from './components/BoundaryModal';
+import { CandidateComparison, RevisionWorkspace } from './components/DecisionPanels';
 import { LlmConfigModal } from './components/LlmConfigModal';
 import {
   TopNav,
@@ -13,19 +14,25 @@ import { FABRICS } from './data/fabrics';
 import { PATTERNS } from './data/patterns';
 import { PRESET_DEMO_CASES } from './data/presetDemos';
 import { SCENES } from './data/scenes';
+import { deconstructRequirement, fetchWorkerLlmStatus } from './engine/deconstructEngine';
+import { evaluateDecisionConfiguration, matchDecision } from './engine/decisionMatching';
 import {
-  deconstructLocally,
-  deconstructRequirement,
-  fetchWorkerLlmStatus,
-} from './engine/deconstructEngine';
+  appendDecisionVersion,
+  emptyDecisionHistory,
+  findConstraintChanges,
+  previewDecisionRevision,
+  recordDecisionRevision,
+  refreshDecisionRequirement,
+  type RevisionPreview,
+} from './engine/decisionRevisions';
+import { buildDecisionVersion, decisionInput, decisionPresentation } from './engine/decisionVersion';
 import {
   buildLedgerRecordFromSession,
   loadLedgerRecords,
   saveLedgerRecords,
 } from './engine/ledgerStore';
-import { evaluateFeasibility, evaluateMatch, recommendInitialConfig } from './engine/matchingEngine';
-import { generateVisualPromptPack } from './engine/promptEngine';
-import { generateProposalDraft } from './engine/proposalEngine';
+import { evaluateFeasibility } from './engine/matchingEngine';
+import { buildClarificationQuestions, buildLocalDecisionRequirement } from './engine/requirementInterview';
 import { resolveStageVisual } from './engine/visualResolver';
 import { AssetKnowledgeBase } from './pages/AssetKnowledgeBase';
 import { BusinessLedger } from './pages/BusinessLedger';
@@ -35,6 +42,7 @@ import { OnlineDocsPage } from './pages/OnlineDocsPage';
 import { ProposalAndPrompts } from './pages/ProposalAndPrompts';
 import { RequirementStudio, type DeconstructStatus } from './pages/RequirementStudio';
 import { VideoShowcase } from './pages/VideoShowcase';
+import type { CandidateCombination, Constraint, DecisionRequirement, Revision, RevisionOption, Version } from './types/decisions';
 import type {
   AuditLogEntry,
   ConfigurationState,
@@ -52,15 +60,23 @@ import { buildPathname, parsePathname, type AppRoute, type PortalSection } from 
 
 const LEGACY_LLM_KEY = 'sartoria_ai_llm_settings_v1';
 const ENGINE_MODE_KEY = 'sartoria_ai_engine_mode_v2';
+const ACTIVE_PROJECT_KEY = 'sartoria_active_decision_project_v1';
+
+function loadActiveProject(): string | null {
+  try {
+    return window.localStorage.getItem(ACTIVE_PROJECT_KEY);
+  } catch {
+    return null;
+  }
+}
 
 function loadSavedEngineMode(): EngineMode | null {
   try {
-    // Purge legacy client-side key storage if present (YOU-246)
     window.localStorage.removeItem(LEGACY_LLM_KEY);
-    const val = window.localStorage.getItem(ENGINE_MODE_KEY);
-    if (val === 'online_worker' || val === 'local_rules') return val;
+    const value = window.localStorage.getItem(ENGINE_MODE_KEY);
+    if (value === 'online_worker' || value === 'local_rules') return value;
   } catch {
-    // ignore
+    // Use local rules when browser storage is unavailable.
   }
   return null;
 }
@@ -99,25 +115,19 @@ function summarizeConfigDiff(prev: ConfigurationState, next: ConfigurationState)
   return diffs.length > 0 ? diffs.join('；') : undefined;
 }
 
-function resolveInitialConfigForInput(
-  nextInput: RequirementInput,
-  nextDeconstructed: DeconstructedRequirement
-): ConfigurationState {
-  if (nextInput.presetDemoId) {
-    const preset = PRESET_DEMO_CASES.find((d) => d.id === nextInput.presetDemoId);
-    if (preset && preset.input.rawNarrative === nextInput.rawNarrative) {
-      return preset.recommendedConfig;
-    }
-  }
-  return recommendInitialConfig(nextInput, nextDeconstructed);
-}
-
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export default function App() {
   const initialDemo = PRESET_DEMO_CASES[0];
+  const [ledgerRecords, setLedgerRecords] = useState<LedgerRecord[]>(() => loadLedgerRecords());
+  const [initialRecord] = useState(() => {
+    const id = loadActiveProject();
+    return ledgerRecords.find((record) => record.id === id);
+  });
+  const initialVersion = initialRecord?.decisionHistory?.versions.at(-1);
+  const [projectId, setProjectId] = useState(() => initialRecord?.id ?? crypto.randomUUID());
 
   const [route, setRoute] = useState<AppRoute>(() =>
     typeof window !== 'undefined'
@@ -125,16 +135,16 @@ export default function App() {
       : { section: 'home', demoTab: 'requirements' }
   );
 
-  const startedBeyondStep1 =
+  const startedBeyondStep1 = Boolean(initialVersion) ||
     route.section === 'demo' &&
     (route.demoTab === 'configurator' || route.demoTab === 'proposal' || route.demoTab === 'ledger');
 
   const [lastFlowTab, setLastFlowTab] = useState<FlowStepTab>('requirements');
-  const [activeStylePackId, setActiveStylePackId] = useState<StylePackId>('shanghai-haipai');
-  const [input, setInput] = useState<RequirementInput>(initialDemo.input);
-  const [deconstructed, setDeconstructed] = useState<DeconstructedRequirement>(() =>
-    deconstructLocally(initialDemo.input)
-  );
+  const [activeStylePackId, setActiveStylePackId] = useState<StylePackId>(initialRecord?.stylePackId ?? 'shanghai-haipai');
+  const [input, setInput] = useState<RequirementInput>(initialVersion?.requirement.input ?? initialDemo.input);
+  const [requirement, setRequirement] = useState<DecisionRequirement>(() =>
+    initialVersion?.requirement ?? buildLocalDecisionRequirement(input));
+  const [deconstructed, setDeconstructed] = useState<DeconstructedRequirement>(() => decisionPresentation(requirement));
   const [deconstructStatus, setDeconstructStatus] = useState<DeconstructStatus>(
     startedBeyondStep1 ? 'ready' : 'idle'
   );
@@ -142,43 +152,56 @@ export default function App() {
   const [deconstructRunId, setDeconstructRunId] = useState<number>(0);
   const [deconstructError, setDeconstructError] = useState<DeconstructErrorInfo | null>(null);
 
-  const [config, setConfig] = useState<ConfigurationState>(initialDemo.recommendedConfig);
-  const [recommendedPatternId, setRecommendedPatternId] = useState<string>(
-    initialDemo.recommendedConfig.patternId
-  );
+  const [config, setConfig] = useState<ConfigurationState>(() =>
+    initialVersion?.candidate?.config ?? matchDecision(requirement).recommended?.config ?? initialDemo.recommendedConfig);
   const [completedSteps, setCompletedSteps] = useState<CompletedSteps>({
     requirements: startedBeyondStep1,
     configurator: route.section === 'demo' && (route.demoTab === 'proposal' || route.demoTab === 'ledger'),
     proposal: route.section === 'demo' && route.demoTab === 'ledger',
-    ledger: false,
+    ledger: Boolean(initialVersion),
   });
 
   const [sessionLogs, setSessionLogs] = useState<AuditLogEntry[]>([]);
-  const [ledgerRecords, setLedgerRecords] = useState<LedgerRecord[]>(() => loadLedgerRecords());
-  const [lastArchivedRecordId, setLastArchivedRecordId] = useState<string | null>(null);
-
-  const initialSavedMode = typeof window !== 'undefined' ? loadSavedEngineMode() : null;
-  const savedModeRef = useRef<EngineMode | null>(initialSavedMode);
-  const [engineMode, setEngineMode] = useState<EngineMode>(initialSavedMode ?? 'local_rules');
+  const [lastArchivedRecordId, setLastArchivedRecordId] = useState<string | null>(initialRecord?.id ?? null);
+  const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
+  const [initialEngineMode] = useState(loadSavedEngineMode);
+  const savedModeRef = useRef(initialEngineMode);
+  const [engineMode, setEngineMode] = useState<EngineMode>(initialEngineMode ?? 'local_rules');
   const [workerStatus, setWorkerStatus] = useState<WorkerLlmStatus | null>(null);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
-
   const [showLlmModal, setShowLlmModal] = useState(false);
   const [showBoundaryModal, setShowBoundaryModal] = useState(false);
 
   const deconstructTokenRef = useRef(0);
+  const confirmedPreviewRef = useRef<string | null>(null);
 
   const activeSection = route.section;
   const activeTab = route.demoTab;
+  const currentRecord = ledgerRecords.find((record) => record.id === projectId);
+  const history = currentRecord?.decisionHistory ?? emptyDecisionHistory();
+  const latestVersion = history.versions.at(-1) ?? null;
 
-  const refreshWorkerStatus = useCallback(async (allowAutoSelect: boolean) => {
+  const runLocalInterview = useCallback((
+    nextInput: RequirementInput, previous?: DecisionRequirement, presentation?: DeconstructedRequirement,
+  ) => {
+    const result = refreshDecisionRequirement(nextInput, previous);
+    const candidate = matchDecision(result).recommended;
+    setRequirement(result);
+    setDeconstructed(decisionPresentation(result, presentation));
+    if (candidate) setConfig(candidate.config);
+    setRevisionPreview(null);
+    setDecisionNotice(null);
+    setDeconstructStatus('ready');
+    setDeconstructRunId((n) => n + 1);
+    setCompletedSteps((prev) => ({ ...prev, requirements: true }));
+    return result;
+  }, []);
+
+  const refreshWorkerStatus = useCallback(async () => {
     setIsRefreshingStatus(true);
     try {
-      const st = await fetchWorkerLlmStatus();
-      setWorkerStatus(st);
-      if (allowAutoSelect && !savedModeRef.current && st?.configured && !st.quota.budget.exhausted) {
-        setEngineMode('online_worker');
-      }
+      setWorkerStatus(await fetchWorkerLlmStatus());
     } finally {
       setIsRefreshingStatus(false);
     }
@@ -186,76 +209,62 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    fetchWorkerLlmStatus().then((st) => {
+    void fetchWorkerLlmStatus().then((status) => {
       if (!active) return;
-      setWorkerStatus(st);
-      if (!savedModeRef.current && st?.configured && !st.quota.budget.exhausted) {
+      setWorkerStatus(status);
+      if (!savedModeRef.current && status?.configured && !status.quota.budget.exhausted &&
+          status.quota.visitor.remaining > 0 && status.quota.site.remaining > 0) {
         setEngineMode('online_worker');
       }
     });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
 
-  const handleChangeEngineMode = (nextMode: EngineMode) => {
-    setEngineMode(nextMode);
-    savedModeRef.current = nextMode;
+  const handleChangeEngineMode = (mode: EngineMode) => {
+    savedModeRef.current = mode;
+    setEngineMode(mode);
     setDeconstructError(null);
     try {
-      window.localStorage.setItem(ENGINE_MODE_KEY, nextMode);
+      window.localStorage.setItem(ENGINE_MODE_KEY, mode);
     } catch {
-      // ignore
+      // The selected mode still applies to this session.
     }
+  };
+
+  const handleOpenLlmSettings = () => {
+    setShowLlmModal(true);
+    void refreshWorkerStatus();
   };
 
   const syncIfNeededBeforeLeavingStep1 = useCallback(
     (targetTab: WorkspaceTab) => {
       if (
         (targetTab === 'configurator' || targetTab === 'proposal') &&
-        (deconstructStatus === 'idle' || deconstructStatus === 'stale')
+        (deconstructStatus === 'idle' || deconstructStatus === 'stale') && input.rawNarrative.trim()
       ) {
-        const nextDeconstructed = deconstructLocally(input);
-        const nextConfig = resolveInitialConfigForInput(input, nextDeconstructed);
-        setDeconstructed(nextDeconstructed);
-        setConfig(nextConfig);
-        setRecommendedPatternId(nextConfig.patternId);
-        setDeconstructStatus('ready');
-        setDeconstructRunId((n) => n + 1);
-        setCompletedSteps((prev) => ({
-          ...prev,
-          requirements: true,
-          configurator: targetTab === 'proposal' ? true : prev.configurator,
-        }));
+        runLocalInterview(input, requirement);
       }
     },
-    [deconstructStatus, input]
+    [deconstructStatus, input, requirement, runLocalInterview]
   );
 
   const navigate = useCallback(
-    (section: PortalSection, demoTab?: WorkspaceTab) => {
-      setRoute((prev) => {
-        const resolvedTab = demoTab ?? prev.demoTab;
-        if (section === 'demo') {
-          if (resolvedTab !== 'knowledge') {
-            setLastFlowTab(resolvedTab);
-          }
-          syncIfNeededBeforeLeavingStep1(resolvedTab);
+    (section: PortalSection, demoTab?: WorkspaceTab, prepareInterview = true) => {
+      const resolvedTab = demoTab ?? route.demoTab;
+      if (section === 'demo') {
+        if (resolvedTab !== 'knowledge') setLastFlowTab(resolvedTab);
+        if (prepareInterview) syncIfNeededBeforeLeavingStep1(resolvedTab);
+      }
+      const next = { section, demoTab: resolvedTab };
+      if (typeof window !== 'undefined') {
+        const nextPath = buildPathname(next);
+        if (window.location.pathname !== nextPath) {
+          window.history.pushState(null, '', nextPath);
         }
-        const next: AppRoute = {
-          section,
-          demoTab: resolvedTab,
-        };
-        if (typeof window !== 'undefined') {
-          const nextPath = buildPathname(next);
-          if (window.location.pathname !== nextPath) {
-            window.history.pushState(null, '', nextPath);
-          }
-        }
-        return next;
-      });
+      }
+      setRoute(next);
     },
-    [syncIfNeededBeforeLeavingStep1]
+    [route.demoTab, syncIfNeededBeforeLeavingStep1]
   );
 
   useEffect(() => {
@@ -273,6 +282,15 @@ export default function App() {
   useEffect(() => {
     saveLedgerRecords(ledgerRecords);
   }, [ledgerRecords]);
+
+  useEffect(() => {
+    try {
+      if (latestVersion) window.localStorage.setItem(ACTIVE_PROJECT_KEY, projectId);
+      else window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    } catch {
+      // The session can still be used when storage is disabled.
+    }
+  }, [latestVersion, projectId]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
@@ -299,32 +317,53 @@ export default function App() {
     ]);
   };
 
-  const match = useMemo(() => evaluateMatch(input, deconstructed, config), [input, deconstructed, config]);
+  const decisionMatch = useMemo(() => matchDecision(requirement), [requirement]);
+  const selectedCandidate = useMemo(() => {
+    if (deconstructStatus !== 'ready' || decisionMatch.status === 'no_match') return null;
+    const candidate = evaluateDecisionConfiguration(requirement, config);
+    return candidate.status === 'eligible' ? candidate : null;
+  }, [config, decisionMatch.status, deconstructStatus, requirement]);
+  const effectiveInput = useMemo(() => decisionInput(requirement, selectedCandidate), [requirement, selectedCandidate]);
   const feasibility = useMemo(
-    () => evaluateFeasibility(input, config, deconstructed),
-    [input, config, deconstructed]
+    () => evaluateFeasibility(effectiveInput, config, deconstructed),
+    [effectiveInput, config, deconstructed]
   );
   const visual = useMemo(() => resolveStageVisual(config), [config]);
-  const proposal = useMemo(
-    () => generateProposalDraft(input, deconstructed, config, feasibility, match),
-    [input, deconstructed, config, feasibility, match]
-  );
-  const promptPack = useMemo(
-    () => generateVisualPromptPack(input, deconstructed, config),
-    [input, deconstructed, config]
-  );
+  const draftVersion = useMemo(() => {
+    if (deconstructStatus !== 'ready' || (!selectedCandidate && decisionMatch.status !== 'no_match')) return null;
+    if (latestVersion && latestVersion.candidate?.id === selectedCandidate?.id &&
+        JSON.stringify(latestVersion.requirement) === JSON.stringify(requirement)) {
+      return latestVersion;
+    }
+    const revision: Revision | null = latestVersion ? {
+      id: `${latestVersion.id}:manual`, baseVersionId: latestVersion.id,
+      turn: { id: `${latestVersion.id}:manual`, text: '定制业务专员在工作台确认并保存了手工调整。' },
+      requestedPatch: findConstraintChanges(latestVersion.requirement.constraints, requirement.constraints),
+      impacts: [{ area: 'requirements', detail: '按当前约束和已选组合生成对应的方案和三镜头提示词。' }],
+      selectedOption: 'accept', humanDecision: 'confirmed', savedAt: deconstructed.timestamp,
+    } : null;
+    return buildDecisionVersion({
+      projectId, previous: latestVersion, requirement, match: decisionMatch,
+      candidate: selectedCandidate, revision, now: deconstructed.timestamp,
+    });
+  }, [decisionMatch, deconstructed.timestamp, deconstructStatus, latestVersion, projectId, requirement, selectedCandidate]);
 
   const handleChangeInput = (next: RequirementInput) => {
     setInput(next);
     setDeconstructError(null);
-    if (deconstructStatus === 'ready') {
+    if (deconstructStatus === 'ready' || deconstructStatus === 'analyzing') {
+      deconstructTokenRef.current += 1;
       setDeconstructStatus('stale');
+      setAnalysisStage(0);
+      setCompletedSteps((prev) => ({ ...prev, requirements: false, configurator: false, proposal: false, ledger: false }));
     }
   };
 
-  const handleSelectPresetDemo = (demo: PresetDemoCase) => {
+  const resetProject = (brief: RequirementInput) => {
     deconstructTokenRef.current += 1;
-    setInput(demo.input);
+    setProjectId(crypto.randomUUID());
+    setInput(brief);
+    setRequirement(buildLocalDecisionRequirement(brief));
     setDeconstructStatus('idle');
     setDeconstructError(null);
     setAnalysisStage(0);
@@ -336,7 +375,11 @@ export default function App() {
     });
     setLastArchivedRecordId(null);
     setSessionLogs([]);
+    setRevisionPreview(null);
+    setDecisionNotice(null);
   };
+
+  const handleSelectPresetDemo = (demo: PresetDemoCase) => resetProject(demo.input);
 
   const handleLaunchPresetById = (presetId: string) => {
     const demo = PRESET_DEMO_CASES.find((d) => d.id === presetId);
@@ -348,17 +391,14 @@ export default function App() {
 
   const handleRunDeconstruct = async (forceMode?: EngineMode) => {
     if (!input.rawNarrative.trim()) return;
-    const effectiveMode = forceMode ?? engineMode;
-    if (forceMode) {
-      handleChangeEngineMode(forceMode);
-    }
-
+    if (forceMode) handleChangeEngineMode(forceMode);
     const token = ++deconstructTokenRef.current;
+
     setDeconstructError(null);
     setDeconstructStatus('analyzing');
     setAnalysisStage(1);
 
-    const enginePromise = deconstructRequirement(input, effectiveMode);
+    const enginePromise = deconstructRequirement(input, forceMode ?? engineMode);
 
     await waitMs(220);
     if (deconstructTokenRef.current !== token) return;
@@ -368,71 +408,60 @@ export default function App() {
     if (deconstructTokenRef.current !== token) return;
     setAnalysisStage(3);
 
-    const [outcome] = await Promise.all([enginePromise, waitMs(220)]);
+    const [outcome] = await Promise.all([enginePromise, waitMs(240)]);
     if (deconstructTokenRef.current !== token) return;
-
-    if (outcome.quota) {
-      setWorkerStatus((prev) =>
-        prev
-          ? { ...prev, quota: outcome.quota! }
-          : {
-              configured: true,
-              model: outcome.quota!.model,
-              reasoningEffort: 'low',
-              schemaVersion: 'sartoria_requirement_v1',
-              quota: outcome.quota!,
-            }
-      );
-    }
-
+    const quota = outcome.quota;
+    if (quota) setWorkerStatus((prev) => prev ? { ...prev, quota }
+      : { configured: true, model: quota.model, reasoningEffort: 'low', schemaVersion: 'sartoria_requirement_v1', quota });
     if (!outcome.ok) {
       setDeconstructError(outcome.error);
       setDeconstructStatus(deconstructRunId > 0 ? 'stale' : 'idle');
       setAnalysisStage(0);
       return;
     }
-
-    const nextDeconstructed = outcome.data;
-    const nextConfig = resolveInitialConfigForInput(input, nextDeconstructed);
-    const diffSummary =
-      deconstructRunId > 0 ? summarizeConfigDiff(config, nextConfig) : undefined;
-
-    setDeconstructed(nextDeconstructed);
-    setConfig(nextConfig);
-    setRecommendedPatternId(nextConfig.patternId);
-    setDeconstructRunId((n) => n + 1);
-    setDeconstructStatus('ready');
-    setCompletedSteps((prev) => ({ ...prev, requirements: true }));
+    const next = runLocalInterview(input, requirement, outcome.data);
 
     appendSessionLog(
       '需求解构',
-      nextDeconstructed.engineUsed === 'llm_api'
-        ? `GPT-6.2 Astra 结构化拆解完成`
-        : '本地规则引擎需求拆解完成',
-      `输出 8 项专业参数与 6 维审美标签（${nextDeconstructed.colorSpecifiedByUser ? '已识别色彩倾向' : '未指定颜色·留待人工核色'}）`,
-      'Sartoria AI 助手',
-      diffSummary
+      '完成需求访谈与目录约束整理',
+      `记录 ${next.constraints.filter((constraint) => constraint.level === 'hard').length} 条硬条件，附八项定制信息与六维审美摘要。`
     );
+
+  };
+
+  const handleEditConstraints = (constraints: Constraint[]) => {
+    const next = { ...requirement, constraints, questions: buildClarificationQuestions(constraints) };
+    const candidate = matchDecision(next).recommended;
+    setRequirement(next);
+    setDeconstructed(decisionPresentation(next));
+    if (candidate) setConfig(candidate.config);
+    setRevisionPreview(null);
+    setDecisionNotice(null);
+    setCompletedSteps((prev) => ({ ...prev, configurator: false, proposal: false, ledger: false }));
   };
 
   const handleUpdateConfig = (
     updater: (prev: ConfigurationState) => ConfigurationState,
     auditNote?: string
-  ) => {
-    setConfig((prev) => {
-      const next = updater(prev);
-      if (auditNote) {
-        const diffSummary = summarizeConfigDiff(prev, next);
-        appendSessionLog(
-          '资源选配',
-          auditNote,
-          '已同步更新实景舞台、3D面料、可行性校验与三镜头提示词包',
-          '定制业务专员（人工）',
-          diffSummary
-        );
-      }
-      return next;
-    });
+  ): boolean => {
+    if (!input.rawNarrative.trim() || deconstructStatus === 'analyzing') return false;
+    const current = deconstructStatus === 'ready' ? requirement : runLocalInterview(input, requirement);
+    const base = deconstructStatus === 'ready' ? config : matchDecision(current).recommended?.config ?? config;
+    const next = updater(base);
+    const candidate = evaluateDecisionConfiguration(current, next);
+    if (candidate.status !== 'eligible') {
+      setDecisionNotice(`该组合暂不能选用。${candidate.decisionReasons.join('；')}`);
+      return false;
+    }
+    setConfig(next);
+    setDecisionNotice(null);
+    const diff = summarizeConfigDiff(base, next);
+    if (diff) {
+      setRevisionPreview(null);
+      setCompletedSteps((prev) => ({ ...prev, proposal: false, ledger: false }));
+      if (auditNote) appendSessionLog('资源选配', auditNote, '已按当前硬条件核对选配。', '定制业务专员（人工）', diff);
+    }
+    return true;
   };
 
   const handleApplyCasePreset = (caseId: string) => {
@@ -449,51 +478,103 @@ export default function App() {
       }),
       `复用历史案例「${hc.code}」`
     );
-    navigate('demo', 'configurator');
+    navigate('demo', 'configurator', false);
   };
 
-  const upsertCurrentSessionToLedger = (): string => {
-    const existing = ledgerRecords.find((r) => r.projectName === input.projectName);
-    const configDiff = existing ? summarizeConfigDiff(existing.config, config) : undefined;
+  const saveVersionToLedger = (version: Version) => {
+    const { candidate } = version;
+    const latestInput = decisionInput(version.requirement, candidate);
+    const latestPresentation = decisionPresentation(version.requirement);
+    const existing = currentRecord;
     const nextRec = buildLedgerRecordFromSession({
-      id: existing?.id,
+      id: version.projectId,
       projectCode: existing?.projectCode,
       createdAt: existing?.createdAt,
       stylePackId: activeStylePackId,
-      input,
-      deconstructed,
-      config,
+      input: latestInput,
+      deconstructed: latestPresentation,
+      config: candidate?.config ?? null,
+      decisionVersion: version,
       specialistNotes: existing?.specialistNotes ?? '',
       status: existing?.status ?? '待业务专员复核',
       existingLogs: [...(existing?.auditLogs ?? []), ...sessionLogs].slice(-20),
-      actionNote: existing ? '同步更新方案初稿与绘图提示词' : '新建档案并完成首轮方案归档',
-      actionDiff: configDiff,
+      actionNote: candidate ? `保存决策 V${version.number} 和交接快照` : `保存待核决策 V${version.number}`,
+      actionDiff: existing?.config && candidate ? summarizeConfigDiff(existing.config, candidate.config) : undefined,
     });
-
     setLedgerRecords((prev) => {
-      const filtered = prev.filter((r) => r.id !== nextRec.id);
-      return [nextRec, ...filtered];
+      const stored = prev.find((record) => record.id === version.projectId)?.decisionHistory ?? emptyDecisionHistory();
+      const decisionHistory = appendDecisionVersion(stored, version);
+      if (decisionHistory === stored) return prev;
+      return [{ ...nextRec, decisionHistory },
+        ...prev.filter((record) => record.id !== version.projectId)];
     });
     setLastArchivedRecordId(nextRec.id);
+    setSessionLogs([]);
     setCompletedSteps((prev) => ({
       ...prev,
       requirements: true,
       configurator: true,
-      proposal: true,
+      proposal: Boolean(version.proposal),
       ledger: true,
     }));
-    return nextRec.id;
+  };
+
+  const upsertCurrentSessionToLedger = () => {
+    if (!draftVersion) return;
+    if (draftVersion.id === latestVersion?.id) {
+      setLastArchivedRecordId(projectId);
+      return;
+    }
+    saveVersionToLedger(draftVersion);
   };
 
   const handleSaveAndOpenProposal = () => {
-    appendSessionLog('方案初稿', '生成方案初稿与三镜头绘图提示词', `方案编号 ${proposal.id}`);
+    if (!draftVersion?.proposal) return;
+    appendSessionLog('方案初稿', '生成方案初稿与三镜头视觉需求包', `方案编号 ${draftVersion.id}`);
     setCompletedSteps((prev) => ({ ...prev, requirements: true, configurator: true }));
     navigate('demo', 'proposal');
   };
 
   const handleArchiveAndOpenLedger = () => {
+    if (!draftVersion) return;
     upsertCurrentSessionToLedger();
     navigate('demo', 'ledger');
+  };
+
+  const handleChangeFeedback = (feedbackDraft: string) => {
+    setRevisionPreview(null);
+    setLedgerRecords((prev) => prev.map((record) => record.id === projectId && record.decisionHistory
+      ? { ...record, decisionHistory: { ...record.decisionHistory, feedbackDraft } } : record));
+  };
+
+  const handleConfirmFeedback = (option: RevisionOption) => {
+    if (!latestVersion || !revisionPreview || revisionPreview.baseVersionId !== latestVersion.id ||
+        confirmedPreviewRef.current === revisionPreview.id || draftVersion?.id !== latestVersion.id) return;
+    const branch = revisionPreview.branches.find((item) => item.option === option);
+    if (!branch?.canConfirm) return;
+    confirmedPreviewRef.current = revisionPreview.id;
+    setRevisionPreview(null);
+    const revision = recordDecisionRevision(revisionPreview, branch, new Date().toISOString());
+    if (option === 'defer') {
+      setLedgerRecords((prev) => prev.map((record) => record.id === projectId && record.decisionHistory
+        ? { ...record, decisionHistory: {
+          ...record.decisionHistory, rejectedRevisions: [...record.decisionHistory.rejectedRevisions, revision],
+        } } : record));
+      setDecisionNotice('已记录本次挂起，原版本和反馈草稿均可继续使用。');
+      return;
+    }
+    const updated = buildDecisionVersion({
+      projectId, previous: latestVersion, requirement: branch.requirement,
+      match: branch.match, candidate: branch.candidate, revision,
+    });
+    setRequirement(branch.requirement);
+    setInput(branch.requirement.input);
+    setDeconstructed(decisionPresentation(branch.requirement));
+    if (branch.candidate) setConfig(branch.candidate.config);
+    setDecisionNotice(branch.candidate
+      ? `已确认并保存 V${updated.number}。可在台账中对比和导出。`
+      : `已保存待核 V${updated.number}。当前无合格组合，可在台账中导出复核依据。`);
+    saveVersionToLedger(updated);
   };
 
   const handleUpdateLedgerRecord = (
@@ -533,10 +614,21 @@ export default function App() {
   };
 
   const handleLoadRecordIntoStudio = (record: LedgerRecord) => {
-    setInput(record.requirementInput);
-    setDeconstructed(record.deconstructed);
-    setConfig(record.config);
-    setRecommendedPatternId(record.config.patternId);
+    deconstructTokenRef.current += 1;
+    const savedVersion = record.decisionHistory?.versions.at(-1);
+    const next = savedVersion?.requirement ?? buildLocalDecisionRequirement(record.requirementInput);
+    const storedConfig = savedVersion?.candidate?.config ?? record.config;
+    const candidate = storedConfig ? evaluateDecisionConfiguration(next, storedConfig) : null;
+    const selected = candidate?.status === 'eligible' ? storedConfig : matchDecision(next).recommended?.config;
+    setProjectId(record.id);
+    setActiveStylePackId(record.stylePackId);
+    setInput(next.input);
+    setRequirement(next);
+    setDeconstructed(decisionPresentation(next));
+    if (selected) setConfig(selected);
+    setLastArchivedRecordId(record.id);
+    setRevisionPreview(null);
+    setDecisionNotice(null);
     setDeconstructStatus('ready');
     setDeconstructError(null);
     setDeconstructRunId((n) => n + 1);
@@ -551,16 +643,19 @@ export default function App() {
         id: `slog-reload-${Date.now()}`,
         timestamp: new Date().toISOString(),
         stage: '资源选配',
-        action: `从项目档案回载「${record.projectCode}」`,
-        detail: '继续调整搭配方案并同步追踪变更轨迹',
+        action: `从台账回载项目「${record.projectCode}」`,
+        detail: '继续调整静态模拟资源并同步追踪变更轨迹',
         actor: '定制业务专员（人工）',
       },
     ]);
-    navigate('demo', 'configurator');
+    navigate('demo', 'configurator', false);
   };
 
   const handleStartNewRequirement = () => {
-    handleSelectPresetDemo(PRESET_DEMO_CASES[0]);
+    resetProject({
+      projectName: '', clientName: '', businessType: 'corporate_uniform', season: 'all_season',
+      groupSize: '', targetSceneId: 'scene-lujiazui-summit', rawNarrative: '',
+    });
     navigate('demo', 'requirements');
   };
 
@@ -574,16 +669,19 @@ export default function App() {
         engineMode={engineMode}
         workerStatus={workerStatus}
         ledgerCount={ledgerRecords.length}
-        onOpenLlmModal={() => {
-          setShowLlmModal(true);
-          void refreshWorkerStatus(false);
-        }}
+        onOpenLlmModal={handleOpenLlmSettings}
         onOpenBoundaryModal={() => setShowBoundaryModal(true)}
       />
 
       <main className="app-main">
+        {activeSection === 'demo' && decisionNotice && (
+          <div className="page-wrap"><p className="decision-alert" role="status">{decisionNotice}</p></div>
+        )}
         {activeSection === 'home' && (
-          <LandingHome onNavigate={navigate} onLaunchPresetDemo={handleLaunchPresetById} />
+          <LandingHome
+            onNavigate={navigate}
+            onLaunchPresetDemo={handleLaunchPresetById}
+          />
         )}
 
         {activeSection === 'video' && <VideoShowcase onNavigate={navigate} />}
@@ -600,29 +698,51 @@ export default function App() {
             engineMode={engineMode}
             workerStatus={workerStatus}
             deconstructError={deconstructError}
+            decisionRequirement={deconstructStatus === 'ready' ? requirement : undefined}
             onChangeInput={handleChangeInput}
+            onEditConstraints={handleEditConstraints}
+            onStartNewRequirement={handleStartNewRequirement}
             onSelectPresetDemo={handleSelectPresetDemo}
-            onRunDeconstruct={(mode) => {
-              void handleRunDeconstruct(mode);
-            }}
-            onOpenLlmModal={() => {
-              setShowLlmModal(true);
-              void refreshWorkerStatus(false);
-            }}
+            onRunDeconstruct={(mode) => { void handleRunDeconstruct(mode); }}
+            onOpenLlmModal={handleOpenLlmSettings}
             onProceedToConfigurator={() => navigate('demo', 'configurator')}
           />
         )}
 
-        {activeSection === 'demo' && activeTab === 'configurator' && (
+        {activeSection === 'demo' && activeTab === 'configurator' && deconstructStatus === 'ready' && (
+          <div className="page-wrap">
+            <CandidateComparison
+              result={decisionMatch}
+              selected={selectedCandidate}
+              onSelectCandidate={(candidate: CandidateCombination) => handleUpdateConfig(() => candidate.config, '选择对比组合')}
+            />
+            {draftVersion && (
+              <RevisionWorkspace
+                version={latestVersion?.id === draftVersion?.id ? latestVersion : null}
+                feedbackDraft={history.feedbackDraft}
+                preview={revisionPreview}
+                onSaveBase={upsertCurrentSessionToLedger}
+                onChangeDraft={handleChangeFeedback}
+                onPreview={() => latestVersion && setRevisionPreview(previewDecisionRevision(latestVersion, history.feedbackDraft))}
+                onCancelPreview={() => setRevisionPreview(null)}
+                onConfirm={handleConfirmFeedback}
+                canSaveBase
+                pendingBase={!draftVersion.candidate}
+              />
+            )}
+          </div>
+        )}
+
+        {activeSection === 'demo' && activeTab === 'configurator' && selectedCandidate && draftVersion?.promptPack && (
           <ConfiguratorStudio
-            input={input}
+            input={effectiveInput}
             deconstructed={deconstructed}
             config={config}
-            recommendedPatternId={recommendedPatternId}
-            match={match}
+            decisionMatch={decisionMatch}
+            selectedCandidate={selectedCandidate}
             feasibility={feasibility}
             visual={visual}
-            promptPack={promptPack}
+            promptPack={draftVersion.promptPack}
             onUpdateConfig={handleUpdateConfig}
             onApplyCasePreset={handleApplyCasePreset}
             onBackToRequirements={() => navigate('demo', 'requirements')}
@@ -630,10 +750,10 @@ export default function App() {
           />
         )}
 
-        {activeSection === 'demo' && activeTab === 'proposal' && (
+        {activeSection === 'demo' && activeTab === 'proposal' && draftVersion?.proposal && draftVersion.promptPack && (
           <ProposalAndPrompts
-            proposal={proposal}
-            promptPack={promptPack}
+            proposal={draftVersion.proposal}
+            promptPack={draftVersion.promptPack}
             heroPreviewImage={visual.heroImage}
             craftPreviewImage={visual.craftCloseupImage}
             isArchived={completedSteps.ledger}
@@ -641,6 +761,20 @@ export default function App() {
             onSaveToLedger={upsertCurrentSessionToLedger}
             onArchiveAndOpenLedger={handleArchiveAndOpenLedger}
           />
+        )}
+
+        {activeSection === 'demo' && (
+          (activeTab === 'configurator' && deconstructStatus !== 'ready') ||
+          (activeTab === 'proposal' && !draftVersion?.proposal)
+        ) && (
+          <div className="page-wrap">
+            <h1 className="page-h1">{deconstructStatus === 'ready' ? '暂无可交接方案' : '先完成需求访谈'}</h1>
+            <p>{deconstructStatus === 'ready' ? '当前硬条件在模拟目录中暂无合格组合。请回到选配查看缺证和拒绝理由。' : '输入简报并核对来源，再进入选配。'}</p>
+            <button type="button" className="btn-outline" onClick={() => navigate('demo', deconstructStatus === 'ready' ? 'configurator' : 'requirements')}>
+              {deconstructStatus === 'ready' ? '查看选配依据' : '返回需求访谈'}
+            </button>
+            {draftVersion && <button type="button" className="btn-black" onClick={handleArchiveAndOpenLedger}>保存待核档案</button>}
+          </div>
         )}
 
         {activeSection === 'demo' && activeTab === 'knowledge' && (
@@ -653,14 +787,14 @@ export default function App() {
                 (prev) => ({ ...prev, patternId, activeView: 'blueprint', focusedHotspotId: null }),
                 `从资产库载入版型 ${patternId}`
               );
-              navigate('demo', 'configurator');
+              navigate('demo', 'configurator', false);
             }}
             onTryFabricInStudio={(fabricId) => {
               handleUpdateConfig(
                 (prev) => ({ ...prev, fabricId, activeView: 'craft_3d', focusedHotspotId: null }),
                 `从资产库载入面料 ${fabricId}`
               );
-              navigate('demo', 'configurator');
+              navigate('demo', 'configurator', false);
             }}
             onTryCraftInStudio={(craftId) => {
               handleUpdateConfig(
@@ -673,7 +807,7 @@ export default function App() {
                 }),
                 `从资产库叠加细节 ${craftId}`
               );
-              navigate('demo', 'configurator');
+              navigate('demo', 'configurator', false);
             }}
             onTryCaseInStudio={handleApplyCasePreset}
           />
@@ -696,9 +830,7 @@ export default function App() {
         workerStatus={workerStatus}
         isRefreshing={isRefreshingStatus}
         onChangeMode={handleChangeEngineMode}
-        onRefreshStatus={() => {
-          void refreshWorkerStatus(false);
-        }}
+        onRefreshStatus={() => { void refreshWorkerStatus(); }}
         onClose={() => setShowLlmModal(false)}
       />
 

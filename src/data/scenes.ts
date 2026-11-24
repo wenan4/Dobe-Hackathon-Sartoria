@@ -1,5 +1,19 @@
 import type { SceneEnvironment } from '../types/sartoria';
 
+const sceneTypes: Readonly<Record<string, readonly string[] | undefined>> = {
+  'scene-bund-protocol': ['indoor_formal'],
+  'scene-lujiazui-summit': ['indoor_formal'],
+  'scene-jingan-salon': ['indoor_formal', 'indoor_performance'],
+  'scene-outdoor-stage': ['outdoor_stage'],
+  'scene-bund-banquet': ['formal_evening', 'indoor_formal'],
+};
+
+// A catalog venue can be identified even when its broader use has not been classified.
+export function sceneFits(sceneId: string, requested: string): boolean | undefined {
+  if (SCENES.some(({ id }) => id === requested)) return sceneId === requested;
+  return sceneTypes[sceneId]?.includes(requested);
+}
+
 export const SCENES: SceneEnvironment[] = [
   {
     id: 'scene-studio-minimal',

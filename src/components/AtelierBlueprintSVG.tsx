@@ -19,6 +19,7 @@ export function AtelierBlueprintSVG({ pattern, fabric, crafts }: AtelierBlueprin
   const trimHex = hasContrastPiping ? accentTrimHex ?? '#d94d7d' : '#111111';
   const isGown = silhouetteType === 'gown_column' || silhouetteType === 'gown_cape';
   const isStageSet = silhouetteType === 'stage_two_piece';
+  const hasSuitLapel = collarStyle === 'notch_lapel' || collarStyle === 'peak_lapel';
   const isJacket =
     silhouetteType === 'jacket_h_cross_collar' ||
     silhouetteType === 'jacket_h_low_collar' ||
@@ -341,13 +342,18 @@ export function AtelierBlueprintSVG({ pattern, fabric, crafts }: AtelierBlueprin
               strokeWidth="1.6"
             />
             <path
-              d="M 352 102 L 355 86 C 368 82, 392 82, 405 86 L 408 102 L 380 128 Z"
+              d={hasSuitLapel
+                ? 'M 352 98 L 344 118 L 355 122 L 347 127 L 380 186 Z M 408 98 L 416 118 L 405 122 L 413 127 L 380 186 Z'
+                : 'M 352 102 L 355 86 C 368 82, 392 82, 405 86 L 408 102 L 380 128 Z'}
               fill={baseHex}
               fillOpacity="0.2"
               stroke="#111111"
               strokeWidth="1.5"
             />
-            <line x1="380" y1="128" x2="380" y2="286" stroke="#111111" strokeWidth="1.3" />
+            <line x1="380" y1={hasSuitLapel ? 186 : 128} x2="380" y2="286" stroke="#111111" strokeWidth="1.3" />
+            {pattern.blueprintConfig.closureStyle === 'single_two_btn' && (
+              <g fill="none" stroke="#111111"><circle cx="380" cy="196" r="3" /><circle cx="380" cy="222" r="3" /></g>
+            )}
             {hasFullCanvas && (
               <path
                 d="M 326 146 Q 348 168 370 198 M 434 146 Q 412 168 390 198"

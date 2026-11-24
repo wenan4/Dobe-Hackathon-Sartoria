@@ -1,5 +1,6 @@
 import { ArrowUpRight, Check, Clock, Download, FileJson, Plus, Printer, Save } from 'lucide-react';
 import { useState } from 'react';
+import { VersionHandoff } from '../components/DecisionPanels';
 import { HISTORICAL_CASES } from '../data/cases';
 import { CRAFTS } from '../data/crafts';
 import { FABRICS } from '../data/fabrics';
@@ -93,18 +94,16 @@ export function BusinessLedger({
   const draftStatus: LedgerReviewStatus = activeDraft?.status ?? '待业务专员复核';
   const draftNotes = activeDraft?.specialistNotes ?? '';
 
-  const avgMatch =
-    records.length > 0
-      ? Math.round(records.reduce((sum, r) => sum + r.matchScore, 0) / records.length)
-      : 0;
+  const savedVersions = records.reduce((sum, record) => sum + (record.decisionHistory?.versions.length ?? 0), 0);
   const pendingReviewCount = records.filter((r) => r.status !== '已归档').length;
   const totalActions = records.reduce((sum, r) => sum + r.auditLogs.length, 0);
 
-  const selectedPattern = selected ? PATTERNS.find((p) => p.id === selected.config.patternId) : undefined;
-  const selectedFabric = selected ? FABRICS.find((f) => f.id === selected.config.fabricId) : undefined;
-  const selectedScene = selected ? SCENES.find((s) => s.id === selected.config.sceneId) : undefined;
-  const selectedCrafts = selected
-    ? CRAFTS.filter((c) => selected.config.craftIds.includes(c.id))
+  const selectedConfig = selected?.config;
+  const selectedPattern = PATTERNS.find((p) => p.id === selectedConfig?.patternId);
+  const selectedFabric = FABRICS.find((f) => f.id === selectedConfig?.fabricId);
+  const selectedScene = SCENES.find((s) => s.id === selectedConfig?.sceneId);
+  const selectedCrafts = selectedConfig
+    ? CRAFTS.filter((c) => selectedConfig.craftIds.includes(c.id))
     : [];
   const selectedCases = selected
     ? HISTORICAL_CASES.filter((hc) => (selected.matchedCaseIds ?? []).includes(hc.id))
@@ -204,14 +203,16 @@ export function BusinessLedger({
           <div className="kpi-num">{pendingReviewCount}</div>
         </div>
         <div className="kpi-card">
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>平均契合度</div>
-          <div className="kpi-num">{avgMatch}%</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>决策版本</div>
+          <div className="kpi-num">{savedVersions}</div>
         </div>
         <div className="kpi-card">
           <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>变更留痕</div>
           <div className="kpi-num">{totalActions}</div>
         </div>
       </div>
+
+      {selected?.decisionHistory && <VersionHandoff key={selected.id} history={selected.decisionHistory} />}
 
       <div className="ledger-split">
         <section className="surface-card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -221,14 +222,14 @@ export function BusinessLedger({
                 <tr>
                   <th>项目</th>
                   <th>匹配资产</th>
-                  <th>契合度</th>
+                  <th>匹配分</th>
                   <th>状态</th>
                 </tr>
               </thead>
               <tbody>
                 {records.map((rec) => {
-                  const pat = PATTERNS.find((p) => p.id === rec.config.patternId);
-                  const fab = FABRICS.find((f) => f.id === rec.config.fabricId);
+                  const pat = PATTERNS.find((p) => p.id === rec.config?.patternId);
+                  const fab = FABRICS.find((f) => f.id === rec.config?.fabricId);
                   const isSel = selected?.id === rec.id;
                   const isNewlyArchived = highlightedRecordId === rec.id;
 
@@ -255,7 +256,7 @@ export function BusinessLedger({
                         </div>
                       </td>
                       <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
-                        <div>{pat?.code ?? rec.config.patternId}</div>
+                        <div>{pat?.code ?? rec.config?.patternId ?? '暂无合格组合'}</div>
                         <div style={{ color: 'var(--ink-muted)' }}>{fab?.shortName}</div>
                       </td>
                       <td
@@ -265,7 +266,7 @@ export function BusinessLedger({
                           fontWeight: 600,
                         }}
                       >
-                        {rec.matchScore}%
+                        {rec.config ? (rec.decisionHistory ? rec.matchScore : `${rec.matchScore}% · 旧档`) : '待核'}
                       </td>
                       <td>
                         <span className="meta-badge">{rec.status}</span>
@@ -328,14 +329,14 @@ export function BusinessLedger({
                 <div className="ledger-block-title">
                   <span>匹配资产</span>
                 </div>
-                <div className="ledger-asset-list">
+                {selectedConfig ? <div className="ledger-asset-list">
                   <div>
                     <strong>版型：</strong>
-                    {selectedPattern ? `${selectedPattern.code} ${selectedPattern.name}` : selected.config.patternId}
+                    {selectedPattern ? `${selectedPattern.code} ${selectedPattern.name}` : selectedConfig.patternId}
                   </div>
                   <div>
                     <strong>面料：</strong>
-                    {selectedFabric ? `${selectedFabric.code} ${selectedFabric.name}` : selected.config.fabricId}
+                    {selectedFabric ? `${selectedFabric.code} ${selectedFabric.name}` : selectedConfig.fabricId}
                   </div>
                   <div>
                     <strong>工艺：</strong>
@@ -351,9 +352,9 @@ export function BusinessLedger({
                   </div>
                   <div>
                     <strong>场景：</strong>
-                    {selectedScene?.shortName ?? selected.config.sceneId}
+                    {selectedScene?.shortName ?? selectedConfig.sceneId}
                   </div>
-                </div>
+                </div> : <p>暂无合格组合。拒绝和待核依据已保存在版本交接内。</p>}
               </div>
 
               <div className="ledger-block no-print">

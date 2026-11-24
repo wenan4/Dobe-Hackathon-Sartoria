@@ -130,6 +130,7 @@ export function resolveStageVisual(config: ConfigurationState): ResolvedStageVis
     ].includes(fabric.id);
   }
 
+  if (isUniform && pattern.blueprintConfig.collarStyle === 'notch_lapel') isExact = false;
   const previewBadge = `${scene.shortName} · ${fabric.shortName}`;
 
   const craftCloseupImage =
