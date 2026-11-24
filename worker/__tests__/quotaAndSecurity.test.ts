@@ -10,6 +10,7 @@ import {
 import { QuotaLedgerCore, type SqlExecutorLike } from '../quotaCore.ts';
 import {
   REQUIREMENT_SCHEMA_VERSION,
+  SARTORIA_SYSTEM_PROMPT,
   validateStructuredRequirement,
 } from '../schema.ts';
 import { resolveVisitorIdentity } from '../visitorAuth.ts';
@@ -29,6 +30,23 @@ function createMemorySqlExecutor(): SqlExecutorLike {
     },
   };
 }
+
+describe('Worker extraction prompt', () => {
+  it('requires explicit garment quantities, named venues, and group commissions in the extracted facts', () => {
+    expect(SARTORIA_SYSTEM_PROMPT).toMatch(/threeBuckets\.userExplicit[^\n]+成衣数量、具名场地和委托性质/);
+    expect(SARTORIA_SYSTEM_PROMPT).toContain('包括一件、一套与多件多套');
+    expect(SARTORIA_SYSTEM_PROMPT).toMatch(/category\.value[^\n]+不能只留在 sourceQuote/);
+    expect(SARTORIA_SYSTEM_PROMPT).toContain('完整场地或活动名称');
+    expect(SARTORIA_SYSTEM_PROMPT).toContain('团体委托及原文所指的委托方或团队');
+  });
+
+  it('distinguishes supported quantities and treats uncertainty separately across the response', () => {
+    expect(SARTORIA_SYSTEM_PROMPT).toContain('在所有字段区分成衣件数、套数、穿着人数和每人配额');
+    expect(SARTORIA_SYSTEM_PROMPT).toContain('成衣件套数不能推作人数或每人配额');
+    expect(SARTORIA_SYSTEM_PROMPT).toContain('明确事实只取自客户需求原文');
+    expect(SARTORIA_SYSTEM_PROMPT).toMatch(/尚未确定[^\n]+needsHumanVerification/);
+  });
+});
 
 describe('YOU-246 & YOU-247: Pricing, Quota Ledger, Concurrency, Signed Cookies & Schema Guardrails', () => {
   it('computes exact gpt-6.2-astra standard & cached token costs in micro-dollars', () => {

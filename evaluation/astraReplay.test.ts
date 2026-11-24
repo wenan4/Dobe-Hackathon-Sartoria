@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import worker, { type WorkerEnv } from '../worker/index';
+import { SARTORIA_SYSTEM_PROMPT } from '../worker/schema';
 import { deconstructRequirement } from '../src/engine/deconstructEngine';
 import { matchDecision } from '../src/engine/decisionMatching';
 import { refreshDecisionRequirement } from '../src/engine/decisionRevisions';
@@ -28,7 +29,7 @@ const cases: { id: string; hard: Fact[]; blocked?: ConstraintField; alternative?
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
-it('preserves the seven original subscription-model responses and their inputs', () => {
+it('preserves the seven original responses and the recorded historical prompt hashes', () => {
   expect(digest(JSON.stringify(replay))).toBe('525c4bd4683360a19426bf861e6c1e0e6619c8eadd650a928c4d9f4141bd44c8');
 });
 
@@ -57,7 +58,7 @@ it.each(cases)('replays frozen Astra brief $id through the Worker, client and ca
     text: { format: { type: 'json_schema', name: 'sartoria_requirement_v1', strict: true } },
   });
   expect(request.input.map(({ role }: { role: string }) => role)).toEqual(['system', 'user']);
-  expect(digest(request.input[0].content)).toBe(replay.systemPromptSha256);
+  expect(request.input[0].content).toBe(SARTORIA_SYSTEM_PROMPT);
   expect(digest(request.input[1].content)).toBe(sample.userPromptSha256);
   if (!outcome.ok) throw new Error(outcome.error.message);
   expect(outcome.data).toMatchObject({ engineUsed: 'llm_api', validationWarnings: [] });

@@ -155,6 +155,9 @@ export const SARTORIA_SYSTEM_PROMPT = [
   '5. 严禁凭空编造具体厘米数：easeAllowance 字段只给放量方向建议（如肩背、袖笼、腹部、裙摆等方向），严禁编造原文未出现的“+4cm”“6厘米”等具体松量数值，且 infoStatus 必须为 unknown（待版师量体与试身核定）。',
   '6. 严禁包含正式报价、具体交期承诺、真实库存结论或 CAD 生产定版结论；followUpQuestions 输出 0–2 条最关键的待核实追问。',
   '7. emotionTags 输出 3–5 个精炼中文审美标签；threeBuckets 清晰分离 userExplicit、systemSuggested、needsHumanVerification 三类信息。',
+  '8. 在 threeBuckets.userExplicit 的正文优先写明本次明确的成衣数量、具名场地和委托性质，最多 8 条，可合并相关要求。成衣数量须写出数字和单位，包括一件、一套与多件多套；若数量对应明确品类，也写入 category.value，不能只留在 sourceQuote 里。保留客户点名的完整场地或活动名称；遇公司、机构或团队统一订做时，写明团体委托及原文所指的委托方或团队。',
+  '9. 在所有字段区分成衣件数、套数、穿着人数和每人配额，分别保留原文明确的数字及其对象。成衣件套数不能推作人数或每人配额，套装品类也不能推作一套。若人数和每人配额均已明确，可另列可直接计算的总量并写明计算依据。',
+  '10. 明确事实只取自客户需求原文；业务类型、季候和项目参考名称仅供理解语境。保留本次已确认的要求与明确排除，把尚未确定的数量、改期换场和委托安排放入 needsHumanVerification；历史订单、已撤回的说法和未决定的选项不能写成当前确认。',
 ].join('\n');
 
 const SPEC_DEFAULT_LABELS: Record<OfficialSpecKey, string> = {
