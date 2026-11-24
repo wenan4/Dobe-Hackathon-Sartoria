@@ -42,6 +42,7 @@ describe('Worker extraction prompt', () => {
   });
 
   it('distinguishes supported quantities and treats uncertainty separately across the response', () => {
+    expect(SARTORIA_SYSTEM_PROMPT).toMatch(/套内单品的件数只描述结构[^\n]+needsHumanVerification[^\n]+订单总套数待确认/);
     expect(SARTORIA_SYSTEM_PROMPT).toContain('在所有字段区分成衣件数、套数、穿着人数和每人配额');
     expect(SARTORIA_SYSTEM_PROMPT).toContain('成衣件套数不能推作人数或每人配额');
     expect(SARTORIA_SYSTEM_PROMPT).toContain('明确事实只取自客户需求原文');
