@@ -111,6 +111,26 @@ describe('decision preview and version snapshots', () => {
     expect(version.candidate?.id).toBe(base.candidate?.id);
   });
 
+  it('keeps questioned and canceled collar swaps available for review without changing the confirmed collar', () => {
+    const base = revise(startConference(), '领型定为立领。', 'keep').version;
+    const before = base.requirement.constraints.find(({ field }) => field === 'collar');
+    const drafts = [
+      ['版师问该不该将立领换交领', '我还得试衣再决定'],
+      ['采购原先打算换回交领', '撤回这项调整，领型按已确认的立领做'],
+    ];
+    for (const [quote, followUp] of drafts) {
+      const { preview, branch, version } = revise(base, `${quote}。${followUp}。`, 'keep');
+      expect(preview.requestedPatch).toMatchObject([{
+        field: 'collar', previous: before,
+        next: { field: 'collar', value: 'cross_open', level: 'preference', quote, sourceTurnId: preview.turn.id },
+      }]);
+      expect(preview.conflicts.map(({ field }) => field)).toEqual(['collar']);
+      expect(preview.branches.map(({ option }) => option)).toEqual(['keep', 'defer']);
+      expect(branch.changes).toEqual([]);
+      expect(version.requirement.constraints.find(({ field }) => field === 'collar')).toEqual(before);
+    }
+  });
+
   it('keeps documented uncertainty and its provenance when a revision restates it', () => {
     const requirement = buildLocalDecisionRequirement({
       ...CONFERENCE_BRIEF,
