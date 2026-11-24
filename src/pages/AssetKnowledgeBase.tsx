@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowUpRight, ChevronDown, Download, Search } from 'lucide-react';
 import { useState } from 'react';
-import { ASSET_SOURCE_LABELS, DECISION_CATALOG, SIMULATED_CARE_LABELS } from '../data/decisionCatalog';
+import { ASSET_SOURCE_LABELS, DECISION_CASE_REFERENCES, DECISION_CATALOG, SIMULATED_CARE_LABELS } from '../data/decisionCatalog';
 import { FABRICS } from '../data/fabrics';
 import { STYLE_PACKS } from '../data/stylePacks';
 import type { AssetSource } from '../types/decisions';
@@ -33,6 +33,38 @@ function AssetProvenance({ source, references = [] }: { source: AssetSource; ref
         })}
       </div>
     </details>
+  );
+}
+
+function CaseCatalogCard({ record, onTry }: {
+  record: (typeof DECISION_CASE_REFERENCES)[number];
+  onTry: (id: string) => void;
+}) {
+  const { asset, source, active } = record;
+  return (
+    <div className="asset-card">
+      <img
+        src={asset.heroImage}
+        alt={asset.title}
+        style={{ width: '100%', height: 156, objectFit: 'cover', borderRadius: 10 }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--ink-muted)' }}>
+        <span style={{ fontFamily: 'var(--font-mono)' }}>{asset.code}</span>
+        <span>{active ? asset.referenceCycle : '归档案例参考'}</span>
+      </div>
+      <h3 style={{ fontSize: 15.5, fontWeight: 600 }}>{asset.title}</h3>
+      <p style={{ fontSize: 13, color: 'var(--ink-secondary)', lineHeight: 1.55 }}>{asset.reviewSummary}</p>
+      <AssetProvenance source={source} />
+      <button
+        type="button"
+        className="btn-black"
+        style={{ marginTop: 'auto', width: '100%' }}
+        onClick={() => onTry(asset.id)}
+      >
+        <span>复用该案例</span>
+        <ArrowUpRight size={13} />
+      </button>
+    </div>
   );
 }
 
@@ -71,8 +103,9 @@ export function AssetKnowledgeBase({
       ...(profile.publicReferences ?? []).map((reference) => `${ASSET_SOURCE_LABELS[reference.kind]} ${reference.reference}`)));
   const filteredCrafts = DECISION_CATALOG.crafts.filter(({ asset, source }) =>
     visible(asset, asset.name, asset.heritageLevel, asset.placement, ASSET_SOURCE_LABELS[source.kind], source.reference));
-  const filteredCases = DECISION_CATALOG.cases.filter(({ asset, source }) =>
+  const filteredCases = DECISION_CASE_REFERENCES.filter(({ asset, source }) =>
     visible(asset, asset.title, asset.clientProfile, ASSET_SOURCE_LABELS[source.kind], source.reference));
+  const archivedCases = filteredCases.filter(({ active }) => !active);
   const filteredVisualFabrics = visualFabrics.filter((asset) => visible(asset, asset.name, asset.composition, asset.weave));
   const searchCount = {
     patterns: filteredPatterns.length, fabrics: filteredFabrics.length + filteredVisualFabrics.length,
@@ -317,34 +350,23 @@ export function AssetKnowledgeBase({
 
       {assetTab === 'cases' && (
         <div className="clean-grid">
-          {filteredCases.map(({ asset: hc, source }) => (
-            <div key={hc.id} className="asset-card">
-              <img
-                src={hc.heroImage}
-                alt={hc.title}
-                style={{ width: '100%', height: 156, objectFit: 'cover', borderRadius: 10 }}
-              />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--ink-muted)' }}>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{hc.code}</span>
-                <span>{hc.referenceCycle}</span>
-              </div>
-              <h3 style={{ fontSize: 15.5, fontWeight: 600 }}>{hc.title}</h3>
-              <p style={{ fontSize: 13, color: 'var(--ink-secondary)', lineHeight: 1.55 }}>
-                {hc.reviewSummary}
-              </p>
-              <AssetProvenance source={source} />
-              <button
-                type="button"
-                className="btn-black"
-                style={{ marginTop: 'auto', width: '100%' }}
-                onClick={() => onTryCaseInStudio(hc.id)}
-              >
-                <span>复用该案例</span>
-                <ArrowUpRight size={13} />
-              </button>
-            </div>
+          {filteredCases.filter(({ active }) => active).map((record) => (
+            <CaseCatalogCard key={record.asset.id} record={record} onTry={onTryCaseInStudio} />
           ))}
         </div>
+      )}
+      {assetTab === 'cases' && archivedCases.length > 0 && (
+        <details className="disclosure" style={{ marginTop: 18, paddingTop: 10 }} open={q ? true : undefined}>
+          <summary>
+            <span>归档案例参考（{archivedCases.length}）</span>
+            <ChevronDown size={13} />
+          </summary>
+          <div className="clean-grid" style={{ marginTop: 12 }}>
+            {archivedCases.map((record) => (
+              <CaseCatalogCard key={record.asset.id} record={record} onTry={onTryCaseInStudio} />
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

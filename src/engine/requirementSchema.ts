@@ -113,12 +113,16 @@ function sameFact(left: Constraint, right: Constraint): boolean {
     left.level === right.level && left.state === right.state && left.sourceTurnId === right.sourceTurnId;
 }
 
+function sourcedUnknown(item: Constraint, facts: Constraint[]): Constraint | undefined {
+  if (item.state !== 'unknown' || !item.quote) return;
+  return facts.find((fact) => sameFact(fact, item) && fact.quote !== null && item.quote!.includes(fact.quote));
+}
+
 function validConstraint(item: Constraint, turns: Map<string, RequirementTurn>, facts: Constraint[]): boolean {
   if (!hasText(item.id) || item.verifiedBy !== null) return false;
   if (item.state === 'unknown') {
     if (item.level !== 'pending' || item.value !== null || item.op !== 'eq' || !hasText(item.reason)) return false;
-    return hasNoQuote(item) || hasVerbatimQuote(item, turns) && facts.some((fact) =>
-      sameFact(fact, item) && fact.quote !== null && item.quote!.includes(fact.quote));
+    return hasNoQuote(item) || hasVerbatimQuote(item, turns) && Boolean(sourcedUnknown(item, facts));
   }
   if (!isRequirementValue(item.field, item.value)) return false;
   if (item.state === 'suggested') {
@@ -162,22 +166,29 @@ export function parseRequirementResponse(
   }
   const issues: string[] = [];
   const facts = turns.flatMap(extractRevisionConstraints);
+  const pendingFacts = constraints.map((item) => sourcedUnknown(item, facts));
+  const normalized = constraints.map((item, index) => {
+    const fact = pendingFacts[index];
+    return fact ? { ...item, reason: fact.reason, blocking: fact.blocking, withdraws: fact.withdraws } : item;
+  });
+  const blockedFields = new Set(normalized.filter((item) => item.blocking).map(({ field }) => field));
   if (!PROFESSIONAL_FIELDS.every((field) => constraints.some((item) => item.field === field))) issues.push('八项专业字段必须逐项给出。');
   if (new Set(constraints.map(({ id }) => id)).size !== constraints.length) issues.push('约束 ID 重复。');
   for (const [index, constraint] of constraints.entries()) {
     if (!validConstraint(constraint, sourceTurns, facts)) issues.push(`${constraint.field} 的值、状态或原话无法核实。`);
     const others = constraints.slice(index + 1).filter((item) => item.field === constraint.field);
-    if (others.some((item) => constraintsConflict(constraint, item))) issues.push(`${constraint.field} 含互相冲突的硬约束。`);
-    if (others.some((item) => item.state === 'unknown' || constraint.state === 'unknown')) issues.push(`${constraint.field} 同时含未决与已取值状态。`);
+    if (!blockedFields.has(constraint.field) && others.some((item) => constraintsConflict(constraint, item))) issues.push(`${constraint.field} 含互相冲突的硬约束。`);
+    const unsourcedUnknown = (item: Constraint) => item.state === 'unknown' && item.sourceTurnId === null;
+    if (others.some((item) => unsourcedUnknown(item) || unsourcedUnknown(constraint))) issues.push(`${constraint.field} 同时含无出处的未决项与其他状态。`);
     if (others.some((item) => sameFact(constraint, item))) issues.push(`${constraint.field} 含重复约束。`);
   }
-  // A response cannot drop a hard requirement or replace an ambiguous clause with a definite choice.
+  // Keep all locally verified statements and require a quoted pending item when the source conflicts.
   for (const fact of facts) {
-    if (fact.level !== 'preference' && !constraints.some((item) => sameFact(fact, item))) {
-      issues.push(`${fact.field} 遗漏了原话中的硬约束或待确认项。`);
+    if (!constraints.some((item) => sameFact(fact, item))) {
+      issues.push(`${fact.field} 遗漏了原话中的明确或待确认项。`);
     }
   }
-  const validQuestionFields = new Set(buildClarificationQuestions(constraints).map(({ field }) => field));
+  const validQuestionFields = new Set(buildClarificationQuestions(normalized).map(({ field }) => field));
   if (new Set(questions.map(({ field }) => field)).size !== questions.length || questions.some((question) =>
     !hasText(question.question) || !validQuestionFields.has(question.field))) issues.push('追问须指向尚未决定的关键字段。');
 
@@ -189,7 +200,7 @@ export function parseRequirementResponse(
     ok: true,
     requirement: {
       schemaVersion: REQUIREMENT_SCHEMA_VERSION, mode: 'validated', input, turns, questions,
-      constraints: constraints.map((item) => facts.some((fact) => fact.blocking && sameFact(fact, item)) ? { ...item, blocking: true } : item),
+      constraints: normalized,
     },
     presentation: { dimensions, aestheticArchetype, emotionTags },
   };

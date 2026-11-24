@@ -16,7 +16,7 @@ function makeModelResponse(input: RequirementInput) {
   const unknown = { value: null, state: 'unknown', level: 'pending', sourceTurnId: null, quote: null, reason: '原话未提及' };
   const dimension = { ...unknown, score: null };
   return {
-    schemaVersion, constraints: constraints.map(({ blocking: _blocking, ...constraint }) => constraint), questions,
+    schemaVersion, constraints: constraints.map(({ blocking: _blocking, withdraws: _withdraws, ...constraint }) => constraint), questions,
     dimensions: {
       styleTone: dimension, silhouetteReq: dimension, fabricTexture: dimension,
       craftDetail: dimension, colorSystem: dimension, sceneFit: dimension,
@@ -85,6 +85,49 @@ describe('the offline requirement interview', () => {
     expect(outfit.some(({ field }) => field === 'quantity')).toBe(false);
     const count = extractRevisionConstraints({ id: 'corrected', text: '不是订十八套，而是十二套。' });
     expect(count.filter(({ field }) => field === 'quantity')).toMatchObject([{ value: 12, op: 'eq' }]);
+  });
+
+  it('reads descriptive classifiers and catalog craft aliases without interpreting craft adjectives as patches', () => {
+    const jacket = extractRevisionConstraints({ id: 'jacket-order', text: '给自己做件薄款夹克，工艺选暗门襟改良立领。' });
+    expect(jacket).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'quantity', value: 1, level: 'hard' }),
+      expect.objectContaining({ field: 'craft', value: 'crf-hidden-mandarin-placket', op: 'eq' }),
+    ]));
+    const gowns = extractRevisionConstraints({ id: 'gown-order', text: '订两条礼宾长裙，指定全毛衬手工归拔。' });
+    expect(gowns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'quantity', value: 2 }),
+      expect.objectContaining({ field: 'craft', value: 'crf-full-canvas-guiba' }),
+    ]));
+    expect(extractRevisionConstraints({ id: 'meta', text: '两条洗护要求是礼服可机洗且可手洗。' }).some(({ field }) => field === 'quantity')).toBe(false);
+  });
+
+  it('scopes compact qualifiers and leaves unaffected protections in place', () => {
+    const split = extractRevisionConstraints({ id: 'brief-scope', text: '最好真丝必须可机洗不要干洗，颜色未定、领型必须翻领。' });
+    expect(split).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'fabric', value: 'silk', level: 'preference', op: 'eq' }),
+      expect.objectContaining({ field: 'care', value: 'machine_wash', level: 'hard', op: 'eq' }),
+      expect.objectContaining({ field: 'care', value: 'dry_clean', level: 'hard', op: 'neq' }),
+      expect.objectContaining({ field: 'collar', value: 'lapel', level: 'hard', op: 'eq' }),
+      expect.objectContaining({ field: 'color', value: null, state: 'unknown' }),
+    ]));
+    expect(split.find(({ field }) => field === 'color')?.blocking).toBeUndefined();
+    const protectedRevision = extractRevisionConstraints({ id: 'protected', text: '机洗、藏青照旧只把领型改成翻领。' });
+    expect(protectedRevision).toMatchObject([{ field: 'collar', value: 'lapel', quote: '只把领型改成翻领' }]);
+  });
+
+  it('keeps exclusions across a coordinated list and resets at an affirmative instruction', () => {
+    const choices = extractRevisionConstraints({ id: 'coordination', text: '禁止羊毛、醋酸和真丝只用聚酯纤维。' });
+    expect(choices.filter(({ field }) => field === 'fabric').map(({ op, value }) => [op, value])).toEqual([
+      ['neq', 'wool'], ['neq', 'acetate'], ['neq', 'silk'], ['eq', 'polyester'],
+    ]);
+  });
+
+  it('recognizes a reiterated garment closure predicate without treating it as an unresolved craft', () => {
+    const reaffirmation = extractRevisionConstraints({ id: 'closure-review', text: '不用驳领，纽扣仍然不许露在外。' });
+    expect(reaffirmation).toMatchObject([
+      { field: 'collar', op: 'neq', value: 'lapel' },
+      { field: 'closure', op: 'eq', value: 'no_visible_buttons', state: 'explicit', quote: '纽扣仍然不许露在外' },
+    ]);
   });
 
   it('handles compact workplace phrasing and coordinated exclusions without reversing polarity', () => {
@@ -194,5 +237,34 @@ describe('the strict requirement response boundary', () => {
         expect.objectContaining({ field: 'color', state: 'unknown', blocking: true }),
       ]) },
     });
+  });
+
+  it('derives the withdrawal predicate and pending reason from the actual quoted statement', () => {
+    const input = { ...corporateContext, rawNarrative: '取消禁止使用羊毛的要求。' };
+    const stated = parseRequirementResponse(makeModelResponse(input), input);
+    expect(stated).toMatchObject({
+      ok: true, requirement: { constraints: expect.arrayContaining([
+        expect.objectContaining({ field: 'fabric', withdraws: { op: 'neq', value: 'wool' } }),
+      ]) },
+    });
+
+    const unclear = { ...corporateContext, rawNarrative: '颜色必须藏青或者暖灰。' };
+    const response = makeModelResponse(unclear);
+    response.constraints.find(({ field }) => field === 'color')!.reason = '原话明确撤回该要求。';
+    const parsed = parseRequirementResponse(response, unclear);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      const color = parsed.requirement.constraints.find(({ field }) => field === 'color')!;
+      expect(color.blocking).toBe(true);
+      expect(isExplicitWithdrawal(color)).toBe(false);
+    }
+  });
+
+  it('accepts quoted conflicting facts only with a verified blocking marker', () => {
+    const input = { ...corporateContext, rawNarrative: '一定要米白，绝不能米白。' };
+    const response = makeModelResponse(input);
+    expect(parseRequirementResponse(response, input)).toMatchObject({ ok: true });
+    response.constraints = response.constraints.filter((item) => item.field !== 'color' || item.state !== 'unknown');
+    expect(parseRequirementResponse(response, input)).toMatchObject({ ok: false });
   });
 });

@@ -64,6 +64,7 @@ export function StageViewport({
           <span>{scene.shortName}</span>
           <span style={{ color: 'var(--ink-muted)' }}>·</span>
           <span>规则匹配分 {ruleScore}</span>
+          {config.activeView === 'scene_look' && !visual.isExactPhotographicVariant && <span>模拟场景参考图</span>}
         </div>
 
         <div className="segmented" role="tablist" aria-label="视图切换">

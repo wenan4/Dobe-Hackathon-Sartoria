@@ -67,7 +67,7 @@ const PATTERN_EN: Record<string, string> = {
   suit_woman_stand: 'architectural tailored female executive suit with modified Haipai Mandarin stand collar',
   suit_man_double: 'full-canvas double-breasted peak-lapel bespoke Haipai tuxedo suit',
   suit_ensemble:
-    'coordinated male and female bespoke Shanghai Haipai corporate tailored suits with refined Mandarin stand-lapel collar and crisp structured shoulders',
+    'coordinated bespoke corporate tailored suits',
 };
 
 const CRAFT_EN_MAP: Record<string, string> = {
@@ -105,7 +105,13 @@ export function generateVisualPromptPack(
   const sheenEn = fabric.luster.includes('哑光') ? 'matte finish' :
     fabric.luster.includes('微光') ? 'soft low sheen' : 'directional visible sheen';
   const sceneEn = SCENE_EN[scene.id] ?? scene.name;
-  const patternEn = PATTERN_EN[pattern.blueprintConfig.silhouetteType] ?? pattern.name;
+  const { silhouetteType, collarStyle, closureStyle } = pattern.blueprintConfig;
+  const suitCollar = collarStyle === 'notch_lapel' ? 'notched lapels' :
+    collarStyle === 'peak_lapel' ? 'peaked lapels' : 'a Mandarin stand collar';
+  const suitFront = closureStyle === 'hidden_placket' ? 'a concealed front fastening' : 'a visible button front';
+  const patternEn = silhouetteType === 'suit_ensemble'
+    ? `${PATTERN_EN.suit_ensemble} with ${suitCollar} and ${suitFront}`
+    : PATTERN_EN[silhouetteType] ?? pattern.name;
   const craftEnList =
     crafts.length > 0
       ? crafts.map((c) => CRAFT_EN_MAP[c.id] ?? 'refined bespoke hand-finished tailoring details').join(', ')

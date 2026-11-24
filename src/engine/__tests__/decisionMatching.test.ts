@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DECISION_CATALOG } from '../../data/decisionCatalog';
+import { DECISION_CASE_REFERENCES, DECISION_CATALOG } from '../../data/decisionCatalog';
 import { PRESET_DEMO_CASES } from '../../data/presetDemos';
+import { SCENES } from '../../data/scenes';
 import { REQUIREMENT_SCHEMA_VERSION } from '../../types/decisions';
 import type { Constraint, DecisionRequirement } from '../../types/decisions';
 import { buildAssetCatalogCsv } from '../../utils/exporters';
@@ -47,7 +48,7 @@ describe('Static catalog decision matching', () => {
   it('uses a bounded four-part catalog with unique IDs and traceable simulation sources', () => {
     const groups = Object.values(DECISION_CATALOG);
     const assets = groups.flat();
-    expect(groups.map((records) => records.length)).toEqual([8, 11, 11, 6]);
+    expect(groups.map((records) => records.length)).toEqual([9, 13, 11, 3]);
     expect(new Set(assets.map(({ asset }) => asset.id)).size).toBe(36);
     expect(new Set(assets.map(({ asset }) => asset.code)).size).toBe(36);
     for (const { source } of assets) {
@@ -59,7 +60,24 @@ describe('Static catalog decision matching', () => {
     expect(csv).toContain('官方案例参考');
     expect(csv).toContain('团队合成属性');
     expect(csv).toContain('https://www.ginetex.net/article/GB/care-symbols');
-    expect(csv).not.toContain('fab-shikumen-stone-gray');
+    expect(csv).toContain('fab-shikumen-stone-gray');
+    expect(csv).toContain('case-hist-004');
+    expect(csv).not.toContain('case-hist-005');
+    const activeReferences = new Set(DECISION_CATALOG.cases.map(({ asset }) => asset.id));
+    for (const { asset } of DECISION_CASE_REFERENCES) {
+      expect(SCENES.some((scene) => scene.id === asset.sceneId)).toBe(true);
+      expect(DECISION_CATALOG.patterns.some((pattern) => pattern.asset.id === asset.patternId)).toBe(true);
+      expect(DECISION_CATALOG.fabrics.some((fabric) => fabric.asset.id === asset.fabricId)).toBe(true);
+      expect(asset.craftIds.every((id) => DECISION_CATALOG.crafts.some((craft) => craft.asset.id === id))).toBe(true);
+      const config = {
+        patternId: asset.patternId, fabricId: asset.fabricId, craftIds: asset.craftIds, sceneId: asset.sceneId,
+        activeView: 'scene_look' as const, focusedHotspotId: null,
+      };
+      const candidate = evaluateDecisionConfiguration({ ...uniformRequirements, constraints: [] }, config);
+      expect(candidate.status).toBe('eligible');
+      expect(candidate.referenceCaseIds.every((id) => activeReferences.has(id))).toBe(true);
+      expect(candidate.evidence.filter(({ kind }) => kind === 'case').every(({ assetId }) => activeReferences.has(assetId))).toBe(true);
+    }
   });
 
   it('shows two materially distinct qualified options, a care review, and a wash violation', () => {
@@ -124,8 +142,39 @@ describe('Static catalog decision matching', () => {
     }));
     expect(evaluateDecisionConfiguration(uniformRequirements, { ...config, fabricId: 'fabric-outside-catalog' }).status)
       .toBe('rejected');
-    expect(evaluateDecisionConfiguration(uniformRequirements, { ...config, fabricId: 'fab-shikumen-stone-gray' }).status)
+    expect(evaluateDecisionConfiguration(uniformRequirements, { ...config, fabricId: 'fab-heavy-cashmere-obsidian' }).status)
       .toBe('needs_review');
+  });
+
+  it('admits the documented heritage blends without guessing their wash care', () => {
+    const requirement = { ...uniformRequirements, constraints: [
+      constraint('businessType', 'corporate_uniform'), constraint('quantity', 45),
+      constraint('scene', 'indoor_formal'), constraint('fabric', 'blend'),
+    ] };
+    for (const [color, fabricId] of [['pine_green', 'fab-shanghai-pine-green'], ['stone_gray', 'fab-shikumen-stone-gray']]) {
+      const colored = { ...requirement, constraints: [...requirement.constraints, constraint('color', color)] };
+      expect(matchDecision(colored).recommended?.config.fabricId).toBe(fabricId);
+      const requiringCare = matchDecision({ ...colored, constraints: [...colored.constraints, constraint('care', 'dry_clean')] });
+      expect(requiringCare.status).toBe('no_match');
+      expect(requiringCare.review.find(({ config }) => config.fabricId === fabricId)?.evidence).toContainEqual(
+        expect.objectContaining({ assetId: fabricId, field: 'care', value: null, outcome: 'unknown' }),
+      );
+    }
+  });
+
+  it('uses a concrete lapel option with concealed closure and rejects it for a stand-only order', () => {
+    const requirement = { ...uniformRequirements, constraints: [
+      constraint('businessType', 'corporate_uniform'), constraint('quantity', 42),
+      constraint('scene', 'indoor_formal'), constraint('color', 'stone_gray'),
+      constraint('closure', 'no_visible_buttons'), constraint('collar', 'stand', 'hard', 'neq'),
+    ] };
+    const lapel = matchDecision(requirement).recommended;
+    expect(lapel?.config.patternId).toBe('pat-haipai-suit-ensemble-lapel');
+    const pattern = DECISION_CATALOG.patterns.find(({ asset }) => asset.id === lapel?.config.patternId);
+    expect(pattern?.asset.blueprintConfig).toMatchObject({ collarStyle: 'notch_lapel', closureStyle: 'hidden_placket' });
+    const stand = { ...requirement, constraints: [...requirement.constraints.slice(0, -1), constraint('collar', 'stand')] };
+    expect(matchDecision(stand).recommended?.config.patternId).toBe('pat-haipai-suit-ensemble');
+    expect(evaluateDecisionConfiguration(stand, lapel!.config).status).toBe('rejected');
   });
 
   it('does not turn official design suggestions or an unspecified color into hard requirements', () => {

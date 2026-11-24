@@ -12,8 +12,9 @@ import type {
   RevisionOption,
   Version,
 } from '../types/decisions';
+import type { RequirementInput } from '../types/sartoria';
 import { evaluateDecisionConfiguration, matchDecision } from './decisionMatching';
-import { buildClarificationQuestions, extractRevisionConstraints, isExplicitWithdrawal } from './requirementInterview';
+import { buildClarificationQuestions, buildLocalDecisionRequirement, extractRevisionConstraints, isExplicitWithdrawal } from './requirementInterview';
 
 export interface RevisionConflict {
   field: ConstraintField;
@@ -74,6 +75,40 @@ function targetsWithdrawal(withdrawal: Constraint, existing: Constraint): boolea
     (!target || target.op === existing.op && target.value === existing.value);
 }
 
+export function refreshDecisionRequirement(input: RequirementInput, previous?: DecisionRequirement): DecisionRequirement {
+  const fresh = buildLocalDecisionRequirement(input);
+  if (!previous) return fresh;
+  if (previous.input.rawNarrative === input.rawNarrative) {
+    // A repeat interview may refresh form defaults, but the accepted multi-turn contract is authoritative.
+    const formFields: [keyof RequirementInput, ConstraintField][] = [
+      ['businessType', 'businessType'], ['season', 'season'], ['groupSize', 'quantity'], ['targetSceneId', 'scene'],
+    ];
+    const refresh = new Set(formFields.filter(([key, field]) => input[key] !== previous.input[key] &&
+      !previous.constraints.some((item) => item.field === field && (item.sourceTurnId || item.verifiedBy))
+    ).map(([, field]) => field));
+    if (!refresh.size) return { ...previous, input };
+    const constraints = [...previous.constraints.filter((item) => !refresh.has(item.field)),
+      ...fresh.constraints.filter((item) => refresh.has(item.field))];
+    return { ...fresh, turns: previous.turns, constraints, questions: buildClarificationQuestions(constraints) };
+  }
+  const confirmed = previous.constraints.filter((item) => item.state === 'confirmed');
+  if (!confirmed.length) return fresh;
+  const turn = { id: crypto.randomUUID(), text: input.rawNarrative };
+  const constraints = [...confirmed];
+  for (const item of fresh.constraints) {
+    const manual = confirmed.filter((prior) => prior.field === item.field);
+    if (manual.length && (item.state === 'suggested' || item.value === null && !item.blocking ||
+        manual.some((prior) => prior.op === item.op && prior.value === item.value))) continue;
+    const next = item.sourceTurnId ? { ...item, id: `${turn.id}:${item.id}`, sourceTurnId: turn.id } : item;
+    constraints.push(next);
+    if (manual.some((prior) => conflictsWith(prior, next))) {
+      constraints.push({ ...next, id: `${next.id}:review`, value: null, state: 'unknown', level: 'pending',
+        reason: '新简报与已人工确认的条件有分歧，请复核。', blocking: true });
+    }
+  }
+  return { ...fresh, turns: [...previous.turns, turn], constraints, questions: buildClarificationQuestions(constraints) };
+}
+
 function applyPatch(constraints: Constraint[], requested: Constraint[], verifiedBy: string): Constraint[] {
   return requested.reduce((current, next) => {
     if (isExplicitWithdrawal(next)) {
@@ -81,7 +116,7 @@ function applyPatch(constraints: Constraint[], requested: Constraint[], verified
       return [...current.filter((item) => !targetsWithdrawal(next, item) &&
         (next.field !== item.field || item.value !== null)), next];
     }
-    const unchanged = current.some((item) => item.field === next.field && item.op === next.op &&
+    const unchanged = current.some((item) => item.state !== 'suggested' && item.field === next.field && item.op === next.op &&
       item.value === next.value && (item.level === next.level || item.level === 'hard'));
     if (unchanged) return current;
     const retained = current.filter((item) => {
@@ -117,6 +152,10 @@ function chooseCandidate(base: Version, requirement: DecisionRequirement, match:
   if (!base.candidate || !match.recommended) return match.recommended;
   if (changes.length === 0) return base.candidate;
   const original = base.candidate.config;
+  if (!changes.some(({ previous, next }) => previous?.level === 'preference' || next?.level === 'preference')) {
+    const retained = evaluateDecisionConfiguration(requirement, original);
+    if (retained.status === 'eligible') return retained;
+  }
   const recommended = match.recommended.config;
   const preservePattern = !changes.some(({ field }) => ['category', 'patternStructure', 'collar', 'easeAllowance', 'closure', 'lengthRatio', 'businessType'].includes(field));
   const preserveScene = !changes.some(({ field }) => field === 'scene' || field === 'businessType');
@@ -134,11 +173,19 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
   const id = `${base.id}:rev-${crypto.randomUUID()}`;
   const turn: RequirementTurn = { id, text: draft };
   const constraints = base.requirement.constraints;
-  const requested = extractRevisionConstraints(turn);
+  const observations = extractRevisionConstraints(turn);
+  const requested = observations.filter((next) => {
+    if (next.value === null) return isExplicitWithdrawal(next) || next.blocking ||
+      !observations.some((item) => item.field === next.field && item.value !== null);
+    return !constraints.some((item) => item.field === next.field && item.op === next.op &&
+      item.value === next.value && (item.state === 'confirmed' || item.state === 'explicit') &&
+      (item.level === next.level || item.level === 'hard'));
+  });
   const requestedPatch = requested.map((next) => ({
     field: next.field,
-    previous: constraints.find((item) => item.field === next.field && item.level === 'hard') ??
-      constraints.find((item) => item.field === next.field) ?? null,
+    previous: constraints.find((item) => isExplicitWithdrawal(next) ? targetsWithdrawal(next, item)
+      : item.field === next.field && (conflictsWith(item, next) || item.op === next.op && item.value === next.value)) ??
+      constraints.find((item) => item.field === next.field && item.value === null) ?? null,
     next,
   }));
   const blocked = new Set<ConstraintField>();
@@ -174,11 +221,12 @@ export function previewDecisionRevision(base: Version, text: string): RevisionPr
     const candidate = chooseCandidate(base, requirement, match, changes);
     const recordsRetention = option === 'keep' && blocked.size > 0 && changes.length === 0;
     const impacts = previewImpacts(base.candidate, candidate, changes);
-    if (recordsRetention) impacts.push({ area: 'requirements', detail: '记录本次反馈，沿用原硬条件和已通过筛选的组合。' });
+    if (recordsRetention) impacts.push({ area: 'requirements', detail: candidate
+      ? '记录本次反馈，沿用原硬条件和已通过筛选的组合。' : '沿用原硬条件，保留待核状态。' });
     return {
       option, requirement, match, candidate, changes,
       impacts,
-      canConfirm: option === 'defer' || changes.length > 0 || recordsRetention,
+      canConfirm: option === 'defer' || (!requested.some((item) => item.blocking) && (changes.length > 0 || recordsRetention)),
     };
   };
 

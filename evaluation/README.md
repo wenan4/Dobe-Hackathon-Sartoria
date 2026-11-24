@@ -9,6 +9,8 @@
 
 ## 复跑
 
+`npm run test:release` 使用单独冻结的 24 条验收简报，核对候选版本后执行放行断言。任一断言失败，命令以非零状态退出。设置 `SARTORIA_RELEASE_SHA` 可复核指定提交，当前检出的源码、评分代码、样本和运行配置须与该提交一致。每个候选的报告写入 `node_modules/.cache/sartoria-baseline/release-<SHA>.json`。
+
 在仓库根目录使用 Node.js 24，安装锁定依赖后运行 `npm exec -- vitest run evaluation/blind.test.ts`。记录评测时新版本 SHA 和冻结样本哈希。断开模型路径并清空项目历史，按相同原文和顺序分别运行纯本地基线与新版本。
 
 基线源码固定到 `4e0d95921683fd04cf7834b754b02687d73d56a6`。从该提交用 `git archive` 读取到一次性目录 `node_modules/.cache/sartoria-baseline`，使用旧版目录与旧版 `deconstructLocally → recommendInitialConfig → evaluateFeasibility`。两版使用相同的空白表单和固定必填默认值，保留原始简报，禁用预设。默认业务、季节和场景不得作为抽取结果，也不从预期标签补填。旧版只映射其明确标为客户要求且可无歧义归一的字段。无法归一的描述保留在失败证据中。旧版没有原生改稿的步骤记为不支持，可另列拼接原话重跑的结果。

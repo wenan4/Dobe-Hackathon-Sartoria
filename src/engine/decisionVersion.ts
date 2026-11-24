@@ -46,6 +46,16 @@ export function decisionPresentation(
   const colorSpecifiedByUser = color?.state === 'explicit' || color?.state === 'confirmed';
   const officialSpecs = presentation.officialSpecs.map((spec): OfficialSpecItem => {
     const value = statement(requirement, spec.key);
+    const assertions = requirement.constraints.filter((item) => item.field === spec.key);
+    const pending = assertions.find((item) => item.state === 'unknown' &&
+      (item.sourceTurnId !== null || item.blocking || item.verifiedBy !== null));
+    const exclusions = assertions.filter((item) => item.op === 'neq' && item.value !== null && item.level === 'hard');
+    if (!value && (pending || exclusions.length)) {
+      const facts = exclusions.map((item) => `排除${describeRequirementValue(item.field, item.value)}`);
+      return { ...spec, value: [...facts, '具体选项待确认'].join('，'), provenance: 'needs_human_verification',
+        constraintKind: 'pending', sourceQuote: pending?.quote ?? exclusions[0]?.quote ?? null,
+        sourceNote: pending?.reason ?? '已记录排除项，具体选项由顾问与客户复核。' };
+    }
     if (spec.key === 'color' && !colorSpecifiedByUser) {
       return { ...spec, value: '色彩待客户确认', provenance: 'needs_human_verification', sourceNote: '当前需求没有经确认的正向色彩条件。' };
     }

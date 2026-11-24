@@ -24,10 +24,37 @@ import type {
 } from '../src/types/sartoria';
 import { buildDecisionExport, buildDecisionMarkdown } from '../src/utils/decisionHandoff';
 import { fixtures, type CatalogExpectation, type Fixture, type FixtureTurn, type Triple } from './fixtures';
+import { holdout } from './holdout';
 
 const BASELINE = '4e0d95921683fd04cf7834b754b02687d73d56a6';
 const FROZEN_SHA256 = '731df75840720f873ffd0846fbbaac0ebb7d0ca13716d8a42bb51f3d7239943a';
+const HOLDOUT_SHA256 = 'a053040ea829964de4bd6f62239aef063c89876dfb31ff8cb40677e3db0180f2';
 const RUN_TIME = '2026-11-24T00:00:00.000Z';
+const gitArgs = ['-c', `safe.directory=${resolve('.').replaceAll('\\', '/')}`];
+
+const releaseMode = (import.meta as ImportMeta & { env?: { MODE?: string } }).env?.MODE === 'release';
+const releaseSha = process.env.SARTORIA_RELEASE_SHA ?? (releaseMode
+  ? execFileSync('git', [...gitArgs, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  : undefined);
+const suite = releaseSha === undefined
+  ? { fixtures, source: 'fixtures.ts', hash: FROZEN_SHA256, report: 'report.json' }
+  : { fixtures: holdout, source: 'holdout.ts', hash: HOLDOUT_SHA256, report: `release-${releaseSha}.json` };
+
+function verifyReleaseSource(expectedSha: string) {
+  expect(expectedSha).toMatch(/^[0-9a-f]{40}$/);
+  const pinned = execFileSync('git', [...gitArgs, 'rev-parse', '--verify', `${expectedSha}^{commit}`],
+    { encoding: 'utf8' }).trim();
+  expect(pinned).toBe(expectedSha);
+  const releaseInputs = [
+    'src', 'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig*.json',
+    'evaluation/blind.test.ts', 'evaluation/fixtures.ts', 'evaluation/holdout.ts',
+  ];
+  const differences = execFileSync('git', [...gitArgs, 'diff', '--name-only', expectedSha, '--', ...releaseInputs],
+    { encoding: 'utf8' });
+  const untracked = execFileSync('git', [...gitArgs, 'ls-files', '--others', '--exclude-standard', '--', ...releaseInputs],
+    { encoding: 'utf8' });
+  expect(differences + untracked, 'Release source, dependencies, and evaluation inputs must match the pinned commit.').toBe('');
+}
 
 type Catalog = {
   patterns: PatternAsset[];
@@ -386,11 +413,12 @@ function sum(metrics: readonly { tp: number; fp: number; fn: number }[]) {
 }
 
 test('replays the frozen rule-only evaluation and prints auditable results', () => {
-  const frozenText = readFileSync(resolve('evaluation/fixtures.ts'), 'utf8').replaceAll('\r\n', '\n');
-  expect(createHash('sha256').update(frozenText).digest('hex')).toBe(FROZEN_SHA256);
-  expect(fixtures).toHaveLength(24);
-  expect(fixtures.flatMap(({ turns }) => turns)).toHaveLength(36);
-  const revisionCount = fixtures.filter(({ group }) => group === 'multi-round-revisions').length;
+  if (releaseSha !== undefined) verifyReleaseSource(releaseSha);
+  const frozenText = readFileSync(resolve('evaluation', suite.source), 'utf8').replaceAll('\r\n', '\n');
+  expect(createHash('sha256').update(frozenText).digest('hex')).toBe(suite.hash);
+  expect(suite.fixtures).toHaveLength(24);
+  expect(suite.fixtures.flatMap(({ turns }) => turns)).toHaveLength(36);
+  const revisionCount = suite.fixtures.filter(({ group }) => group === 'multi-round-revisions').length;
   const baseline = runBaseline();
   const catalog = { patterns: PATTERNS, fabrics: FABRICS, crafts: CRAFTS, scenes: SCENES, cases: HISTORICAL_CASES };
   const storage = new Map<string, string>();
@@ -401,7 +429,7 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
     },
   });
   try {
-    const rows = fixtures.map((fixture) => {
+    const rows = suite.fixtures.map((fixture) => {
       const turn: FixtureTurn = fixture.turns[0];
       const input = scratchInput(fixture.id, turn.text);
       const oldResult = baseline.deconstruct(input);
@@ -422,6 +450,7 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
       const preferred = oldNotice.some((notice) => notice.id === 'feas-craft-ok');
       const oldScore = hardScore(turn.hard, old.triples);
       const newScore = hardScore(turn.hard, observed);
+      const catalogExpected = turn.catalog ?? fixture.catalog;
       const unresolvedOverwrites = turn.unknowns.filter(({ field }) => newScore.extra.some((item) =>
         item.field === field && item.op === 'eq',
       ));
@@ -432,18 +461,19 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
         }))
         : null;
       return {
-        id: fixture.id, group: fixture.group,
+        id: fixture.id, group: fixture.group, catalogOutcome: catalogExpected?.outcome ?? null,
         old: { score: oldScore, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), old.triples.filter((item) => item.op === 'neq')),
           manual: manualEffort(oldScore, old.ambiguous), unknownId: oldAudit.unknownId, knownViolation: oldUnwarned,
           fakeClaim: preferred && oldAudit.violations.includes('craftCompatibility'),
-          catalog: catalogExpectation(turn.catalog ?? fixture.catalog, [oldConfig]) },
+          catalog: catalogExpectation(catalogExpected, [oldConfig]) },
         current: { score: newScore, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), observed.filter((item) => item.op === 'neq')),
-          manual: manualEffort(newScore), quoteCount: claimSourceCount(requirement),
+          manual: manualEffort(newScore), quoteCount: claimSourceCount(requirement), hardClaimCount: observed.length,
           unknownId: newAudit.some((item) => item.unknownId || item.outsideReferences.length > 0),
           knownViolation: [...new Set(newAudit.flatMap((item) => item.violations))],
           unverifiedHard: [...new Set(newAudit.flatMap((item) => item.unknowns))],
           fakeClaim: newAudit.some((item) => item.fakeClaim),
-          catalog: catalogExpectation(turn.catalog ?? fixture.catalog, candidates.map(({ config }) => config)),
+          catalog: catalogExpected && matching.status !== (catalogExpected.outcome === 'eligible' ? 'matched' : 'no_match')
+            ? false : catalogExpectation(catalogExpected, candidates.map(({ config }) => config)),
           matching: matching.status, audit: newAudit, missingFollowUps: unclear, questionCount: requirement.questions.length,
           unresolvedOverwrites: unresolvedOverwrites.map(({ field }) => field) },
         revision,
@@ -468,9 +498,16 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
       { field: 'color', op: 'eq', value: 'navy' }, { field: 'wrinkleResistance', op: 'eq', value: true },
       { field: 'care', op: 'eq', value: 'machine_wash' }, { field: 'style', op: 'neq', value: 'traditional_uniform' },
     ];
+    function catalogChecks(outcome: CatalogExpectation['outcome']) {
+      const probes = rows.filter(({ catalogOutcome }) => catalogOutcome === outcome);
+      return { passed: probes.filter(({ current }) => current.catalog === true).length, total: probes.length };
+    }
     const report = {
-      baseline: BASELINE, fixtureSha256: FROZEN_SHA256, old: totals('old'), current: totals('current'),
+      baseline: BASELINE, productionSha: releaseSha ?? null, fixtureFile: suite.source,
+      fixtureSha256: suite.hash, old: totals('old'), current: totals('current'),
       sourceQuotes: rows.reduce((count, row) => count + row.current.quoteCount, 0),
+      sourceQuoteTotal: rows.reduce((count, row) => count + row.current.hardClaimCount, 0),
+      catalogChecks: { eligible: catalogChecks('eligible'), noMatch: catalogChecks('no-match'), blocked: catalogChecks('blocked') },
       questionsOverLimit: rows.filter(({ current }) => current.questionCount > 2).length,
       missingFollowUps: rows.filter(({ current }) => current.missingFollowUps.length > 0).length,
       unverifiedHard: rows.filter(({ current }) => current.unverifiedHard.length > 0).length,
@@ -494,9 +531,32 @@ test('replays the frozen rule-only evaluation and prints auditable results', () 
       main: { score: hardScore(mainExpected, hard(main)), matching: matchDecision(main).status },
       rows,
     };
-    const output = resolve('node_modules/.cache/sartoria-baseline/report.json');
-    writeFileSync(output, JSON.stringify(report, null, 2));
-    console.log(JSON.stringify({ ...report, rows: undefined, fullReport: output }, null, 2));
+    const { tp, fp, fn } = report.current.hard;
+    const gates = releaseSha === undefined ? null : {
+      hardPrecision: tp / (tp + fp) >= 0.9,
+      hardRecall: tp / (tp + fn) >= 0.9,
+      noOutsideIds: report.current.outside === 0,
+      noKnownViolations: report.current.knownViolation === 0,
+      noUnsupportedKeyClaims: report.current.fakeClaim === 0 && report.unverifiedHard === 0,
+      allUnchangedHardPreserved: report.revisions.invariants === revisionCount,
+      completeArchivedChains: report.revisions.archiveFull >= 5,
+      mainBrief: report.main.score.tp === mainExpected.length && report.main.score.fp === 0 &&
+        report.main.score.fn === 0 && report.main.matching === 'matched',
+      eligibleCatalogProbes: report.catalogChecks.eligible.total > 0 &&
+        report.catalogChecks.eligible.passed === report.catalogChecks.eligible.total,
+      noMatchCatalogProbes: report.catalogChecks.noMatch.total > 0 &&
+        report.catalogChecks.noMatch.passed === report.catalogChecks.noMatch.total,
+      conflictCatalogProbes: report.catalogChecks.blocked.total > 0 &&
+        report.catalogChecks.blocked.passed === report.catalogChecks.blocked.total,
+      quoteSourceTracing: report.sourceQuoteTotal > 0 && report.sourceQuotes === report.sourceQuoteTotal,
+    };
+    const output = resolve('node_modules/.cache/sartoria-baseline', suite.report);
+    writeFileSync(output, JSON.stringify({ ...report, gates }, null, 2));
+    console.log(JSON.stringify({ ...report, gates, rows: undefined, fullReport: output }, null, 2));
+    if (gates) {
+      const failures = Object.entries(gates).filter(([, passed]) => !passed).map(([gate]) => gate);
+      expect(failures, `Release report: ${output}`).toEqual([]);
+    }
   } finally {
     vi.unstubAllGlobals();
   }

@@ -8,6 +8,7 @@
     "dev:worker": "wrangler dev",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:release": "vitest run --mode release evaluation/blind.test.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "cf:dry-run": "wrangler deploy --dry-run"

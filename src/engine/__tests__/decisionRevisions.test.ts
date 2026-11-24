@@ -4,10 +4,11 @@ import type { RevisionOption, Version } from '../../types/decisions';
 import { buildDecisionExport, buildDecisionMarkdown } from '../../utils/decisionHandoff';
 import { buildLedgerCsv } from '../../utils/exporters';
 import { matchDecision } from '../decisionMatching';
-import { appendDecisionVersion, emptyDecisionHistory, previewDecisionRevision, recordDecisionRevision } from '../decisionRevisions';
+import { appendDecisionVersion, emptyDecisionHistory, previewDecisionRevision, recordDecisionRevision, refreshDecisionRequirement } from '../decisionRevisions';
 import { buildDecisionVersion, decisionPresentation } from '../decisionVersion';
 import { buildLedgerRecordFromSession } from '../ledgerStore';
 import { buildLocalDecisionRequirement } from '../requirementInterview';
+import { resolveStageVisual } from '../visualResolver';
 
 function startConference(): Version {
   const requirement = buildLocalDecisionRequirement(CONFERENCE_BRIEF);
@@ -30,6 +31,47 @@ function revise(base: Version, feedback: string, option: RevisionOption) {
 }
 
 describe('decision preview and version snapshots', () => {
+  it('retains an eligible manual alternative when only the batch size changes', () => {
+    const initial = startConference();
+    const base = { ...initial, candidate: initial.match.alternative };
+    expect(base.candidate).not.toBeNull();
+    const updated = revise(base, '数量改为四十八套。', 'accept');
+    expect(updated.version.candidate?.id).toBe(base.candidate?.id);
+    expect(updated.branch.impacts.map(({ area }) => area)).not.toContain('fabric');
+  });
+
+  it('exports the selected lapel and concealed placket in the visual brief', () => {
+    const input = { ...CONFERENCE_BRIEF, rawNarrative: '团体职业服三十套，室内正式接待，必须暖灰、平驳领，不能有明扣。' };
+    const requirement = buildLocalDecisionRequirement(input);
+    const match = matchDecision(requirement);
+    expect(match.recommended?.config.patternId).toBe('pat-haipai-suit-ensemble-lapel');
+    const version = buildDecisionVersion({
+      projectId: 'lapel-brief', previous: null, requirement, match, candidate: match.recommended, revision: null,
+    });
+    const prompt = version.promptPack!.shots[0].prompts.flux_sd;
+    expect(prompt).toContain('notched lapels');
+    expect(prompt).toContain('concealed front fastening');
+    expect(resolveStageVisual(version.candidate!.config).isExactPhotographicVariant).toBe(false);
+  });
+
+  it('keeps confirmed facts and their original quotes across repeat interviews', () => {
+    const base = startConference();
+    const revised = revise(base, '数量改为四十八套。', 'accept').version.requirement;
+    expect(refreshDecisionRequirement(revised.input, revised)).toEqual(revised);
+    const input = { ...revised.input, rawNarrative: '客户现在必须订七十五套。' };
+    const refreshed = refreshDecisionRequirement(input, revised);
+    const quantity = refreshed.constraints.filter((item) => item.field === 'quantity');
+    expect(quantity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ state: 'confirmed', value: 48 }),
+      expect.objectContaining({ value: 75, quote: '客户现在必须订七十五套' }),
+      expect.objectContaining({ blocking: true }),
+    ]));
+    expect(matchDecision(refreshed).recommended).toBeNull();
+    for (const item of quantity.filter((entry) => entry.quote)) {
+      expect(refreshed.turns.find((turn) => turn.id === item.sourceTurnId)?.text).toContain(item.quote);
+    }
+  });
+
   it('keeps combinations out of recommendations while a hard quote needs clarification', () => {
     const requirement = buildLocalDecisionRequirement(CONFERENCE_BRIEF);
     const known = matchDecision(requirement);

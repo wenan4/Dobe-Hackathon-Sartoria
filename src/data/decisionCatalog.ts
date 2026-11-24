@@ -49,6 +49,7 @@ const shawlJacket = 'pat-official-shawl-plum';
 const stageSet = 'pat-official-stage-twopiece';
 const droppedJacket = 'pat-official-xiangyun-dropped';
 const uniform = 'pat-haipai-suit-ensemble';
+const uniformLapel = 'pat-haipai-suit-ensemble-lapel';
 const gown = 'pat-haipai-gown-column';
 const softSuit = 'pat-minimal-unstructured-blazer';
 
@@ -83,6 +84,11 @@ const patterns: Record<string, PatternProfile | undefined> = {
     easeAllowance: 'arm_mobility', style: 'traditional_uniform', quantity: [20, 200],
     craftPackages: [['crf-full-canvas-guiba', 'crf-hidden-mandarin-placket', 'crf-milanese-cuff-label'], ['crf-hidden-mandarin-placket'], ['crf-full-canvas-guiba'], ['crf-milanese-cuff-label'], []],
   },
+  [uniformLapel]: {
+    category: 'suit', patternStructure: 'two_piece', collars: ['lapel'], lengthRatio: 'tailored_suit',
+    easeAllowance: 'arm_mobility', style: 'traditional_uniform', quantity: [20, 200],
+    craftPackages: [['crf-full-canvas-guiba', 'crf-milanese-cuff-label'], ['crf-full-canvas-guiba'], ['crf-milanese-cuff-label'], []],
+  },
   [gown]: {
     category: 'dress', collars: ['stand', 'diagonal'], lengthRatio: 'floor', easeAllowance: 'standard',
     style: 'new_chinese', quantity: [1, 8],
@@ -114,7 +120,7 @@ const fabrics: Record<string, FabricProfile | undefined> = {
   },
   'fab-official-acetate-jacquard': {
     fabric: 'acetate', motif: 'subtle_jacquard', luster: 'medium', care: 'dry_clean',
-    quantity: [1, 80], compatiblePatternIds: [lowCollarJacket, crossJacket, shawlJacket, droppedJacket, uniform], officialCase: 1,
+    quantity: [1, 80], compatiblePatternIds: [lowCollarJacket, crossJacket, shawlJacket, droppedJacket, uniform, uniformLapel], officialCase: 1,
   },
   'fab-official-plum-song': {
     fabric: 'blend', motif: 'subtle_jacquard', luster: 'medium', care: 'dry_clean',
@@ -138,7 +144,15 @@ const fabrics: Record<string, FabricProfile | undefined> = {
   },
   'fab-bund-navy-wool130': {
     fabric: 'wool', motif: 'plain', luster: 'medium', care: 'dry_clean', wrinkleResistance: true,
-    quantity: [1, 200], compatiblePatternIds: [uniform, softSuit], publicReferences: [washReference],
+    quantity: [1, 200], compatiblePatternIds: [uniform, uniformLapel, softSuit], publicReferences: [washReference],
+  },
+  'fab-shikumen-stone-gray': {
+    fabric: 'blend', motif: 'plain', luster: 'medium',
+    quantity: [20, 60], compatiblePatternIds: [uniform, uniformLapel],
+  },
+  'fab-shanghai-pine-green': {
+    fabric: 'blend', motif: 'plain', luster: 'low', wrinkleResistance: true,
+    quantity: [20, 60], compatiblePatternIds: [uniform, uniformLapel],
   },
   'fab-demo-navy-washable-twill': {
     fabric: 'polyester', motif: 'plain', luster: 'low', care: 'machine_wash', wrinkleResistance: true,
@@ -161,9 +175,9 @@ const crafts: Record<string, CraftProfile | undefined> = {
   'crf-contrast-piping-cuff': { compatiblePatternIds: [stageSet], officialCase: 3 },
   'crf-haipai-pipa-button': { compatiblePatternIds: [stageSet, gown] },
   'crf-suzhou-magnolia-embroidery': { care: 'dry_clean', compatiblePatternIds: [gown] },
-  'crf-full-canvas-guiba': { care: 'dry_clean', compatiblePatternIds: [uniform] },
+  'crf-full-canvas-guiba': { care: 'dry_clean', compatiblePatternIds: [uniform, uniformLapel] },
   'crf-hidden-mandarin-placket': { compatiblePatternIds: [lowCollarJacket, droppedJacket, uniform] },
-  'crf-milanese-cuff-label': { care: 'dry_clean', compatiblePatternIds: [uniform, softSuit] },
+  'crf-milanese-cuff-label': { care: 'dry_clean', compatiblePatternIds: [uniform, uniformLapel, softSuit] },
   'crf-demo-washable-soft-seams': { care: 'machine_wash', compatiblePatternIds: [softSuit] },
   'crf-demo-washable-satin-seams': { care: 'machine_wash', compatiblePatternIds: [softSuit, crossJacket] },
 };
@@ -175,6 +189,14 @@ const historicalOfficialCases: Record<string, number | undefined> = {
   'case-hist-006': 6,
 };
 
+const activeCaseIds = new Set(['case-hist-006', 'case-hist-003', 'case-hist-004']);
+
+const legacyAssetSources: Record<string, string | undefined> = {
+  'SFG-PT-201-L': 'src/data/patterns.ts#pat-haipai-suit-ensemble-lapel · 4ae4640 版 SFG-PT-201 所列暗门襟驳领选项 · 套数沿用团队模拟规则',
+  'SFG-FB-202': 'src/data/fabrics.ts#fab-shikumen-stone-gray · 既有暖灰羊毛桑蚕丝资料 · 20–60 套为团队模拟区间，实际产能及洗护待核',
+  'SFG-FB-203': 'src/data/fabrics.ts#fab-shanghai-pine-green · 既有松墨绿抗皱精纺资料 · 20–60 套为团队模拟区间，实际产能及洗护待核',
+};
+
 export const SIMULATED_CARE_LABELS: Record<CareMethod, string> = {
   machine_wash: '可机洗',
   dry_clean: '专业干洗',
@@ -182,7 +204,11 @@ export const SIMULATED_CARE_LABELS: Record<CareMethod, string> = {
 };
 
 export function simulationSource(kind: 'pattern' | 'fabric' | 'craft' | 'case', code: string): AssetSource {
-  return { kind: 'team_simulation', reference: `团队模拟目录 src/data/decisionCatalog.ts · ${kind} · ${code}`, simulated: true };
+  return {
+    kind: 'team_simulation',
+    reference: legacyAssetSources[code] ?? `团队模拟目录 src/data/decisionCatalog.ts · ${kind} · ${code}`,
+    simulated: true,
+  };
 }
 
 function catalogSource(kind: 'pattern' | 'fabric' | 'craft' | 'case', code: string, officialCase?: number): AssetSource {
@@ -193,6 +219,13 @@ function catalogSource(kind: 'pattern' | 'fabric' | 'craft' | 'case', code: stri
     simulated: true,
   };
 }
+
+// Retain all historical context, including records outside the active catalog and CSV.
+export const DECISION_CASE_REFERENCES = HISTORICAL_CASES.map((asset) => ({
+  asset,
+  source: catalogSource('case', asset.code, historicalOfficialCases[asset.id]),
+  active: activeCaseIds.has(asset.id),
+}));
 
 export const DECISION_CATALOG = {
   patterns: PATTERNS.flatMap((asset) => {
@@ -207,8 +240,5 @@ export const DECISION_CATALOG = {
     const profile = crafts[asset.id];
     return profile ? [{ asset, profile, source: catalogSource('craft', asset.code, profile.officialCase) }] : [];
   }),
-  cases: HISTORICAL_CASES.map((asset) => ({
-    asset,
-    source: catalogSource('case', asset.code, historicalOfficialCases[asset.id]),
-  })),
+  cases: DECISION_CASE_REFERENCES.filter(({ active }) => active),
 };

@@ -22,6 +22,7 @@ import {
   findConstraintChanges,
   previewDecisionRevision,
   recordDecisionRevision,
+  refreshDecisionRequirement,
   type RevisionPreview,
 } from './engine/decisionRevisions';
 import { buildDecisionVersion, decisionInput, decisionPresentation } from './engine/decisionVersion';
@@ -184,13 +185,7 @@ export default function App() {
   const runLocalInterview = useCallback((
     nextInput: RequirementInput, previous?: DecisionRequirement, presentation?: DeconstructedRequirement,
   ) => {
-    let result = buildLocalDecisionRequirement(nextInput);
-    if (previous?.input.rawNarrative === nextInput.rawNarrative) {
-      const confirmed = previous.constraints.filter((constraint) => constraint.state === 'confirmed');
-      const confirmedFields = new Set(confirmed.map((constraint) => constraint.field));
-      const constraints = [...result.constraints.filter((constraint) => !confirmedFields.has(constraint.field)), ...confirmed];
-      result = { ...result, constraints, turns: previous.turns, questions: buildClarificationQuestions(constraints) };
-    }
+    const result = refreshDecisionRequirement(nextInput, previous);
     const candidate = matchDecision(result).recommended;
     setRequirement(result);
     setDeconstructed(decisionPresentation(result, presentation));
