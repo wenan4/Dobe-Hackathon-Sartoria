@@ -139,9 +139,32 @@ const hard = (requirement: DecisionRequirement) => requirement.constraints.filte
 const sameSet = (left: readonly string[], right: readonly string[]) =>
   JSON.stringify([...new Set(left)].sort()) === JSON.stringify([...new Set(right)].sort());
 
-function hardScore(gold: readonly Triple[], predicted: readonly Triple[]) {
-  const expected = new Map(gold.map((entry) => [tripleKey(entry), entry]));
-  const observed = new Map(predicted.map((entry) => [tripleKey(entry), entry]));
+const sceneTypes: Readonly<Record<string, readonly string[] | undefined>> = {
+  'scene-bund-banquet': ['formal_evening', 'indoor_formal'],
+  'scene-bund-protocol': ['indoor_formal'],
+  'scene-jingan-salon': ['indoor_formal', 'indoor_performance'],
+  'scene-lujiazui-summit': ['indoor_formal'],
+  'scene-outdoor-stage': ['outdoor_stage'],
+};
+const knownSceneTypes = new Set(Object.values(sceneTypes).flatMap((types) => types ?? []));
+
+function auditSceneValue(sceneId: string, requested: Triple['value'], scenes: readonly SceneEnvironment[]) {
+  if (typeof requested !== 'string' || !scenes.some(({ id }) => id === sceneId)) return undefined;
+  if (scenes.some(({ id }) => id === requested)) return sceneId === requested;
+  return knownSceneTypes.has(requested) ? sceneTypes[sceneId]?.includes(requested) : undefined;
+}
+
+function scoredTripleKey(triple: Triple, scenes: readonly SceneEnvironment[] = SCENES) {
+  if (triple.field !== 'scene') return tripleKey(triple);
+  const allowed = scenes.filter(({ id }) => auditSceneValue(id, triple.value, scenes) === (triple.op === 'eq'))
+    .map(({ id }) => id).sort();
+  // Identical nonempty sets give the same result for every catalog combination's venue.
+  return allowed.length ? JSON.stringify([triple.field, triple.op, allowed]) : tripleKey(triple);
+}
+
+function hardScore(gold: readonly Triple[], predicted: readonly Triple[], keyFor = tripleKey) {
+  const expected = new Map(gold.map((entry) => [keyFor(entry), entry]));
+  const observed = new Map(predicted.map((entry) => [keyFor(entry), entry]));
   const missed = [...expected].filter(([key]) => !observed.has(key)).map(([, item]) => item);
   const extra = [...observed].filter(([key]) => !expected.has(key)).map(([, item]) => item);
   return { tp: expected.size - missed.length, fp: extra.length, fn: missed.length, missed, extra };
@@ -173,14 +196,6 @@ function manualEffort(score: ReturnType<typeof hardScore>, ambiguous: readonly s
   return { corrections: corrections.size, missing: missing.size };
 }
 
-const sceneTypes: Readonly<Record<string, readonly string[]>> = {
-  'scene-bund-banquet': ['formal_evening', 'indoor_formal'],
-  'scene-bund-protocol': ['indoor_formal'],
-  'scene-jingan-salon': ['indoor_formal', 'indoor_performance'],
-  'scene-lujiazui-summit': ['indoor_formal'],
-  'scene-outdoor-stage': ['outdoor_stage'],
-};
-
 function legacyFabricType(fabric: FabricAsset) {
   if (/丝绒/.test(fabric.weave)) return 'velvet';
   if (/三醋酸/.test(fabric.composition)) return 'acetate';
@@ -210,7 +225,6 @@ function auditConfig(config: ConfigurationState, gold: readonly Triple[], catalo
   const hideButtons = ['open_no_buttons', 'hidden_placket'].includes(sketch.closureStyle);
   const vals: Readonly<Record<string, Triple['value'] | readonly Triple['value'][]>> = {
     businessType: pat.businessType,
-    scene: sceneTypes[config.sceneId] ?? null,
     season: pat.seasonFit.includes('all_season') ? fab.seasons :
       fab.seasons.includes('all_season') ? pat.seasonFit : pat.seasonFit.filter((season) => fab.seasons.includes(season)),
     category: pp?.category ?? patternKind,
@@ -232,6 +246,12 @@ function auditConfig(config: ConfigurationState, gold: readonly Triple[], catalo
   const unknowns = new Set<string>();
   for (const constraint of gold) {
     const { field, value, op } = constraint;
+    if (field === 'scene') {
+      const matches = auditSceneValue(config.sceneId, value, catalog.scenes);
+      if (matches === undefined) unknowns.add(field);
+      else if (matches !== (op === 'eq')) violations.add(field);
+      continue;
+    }
     if (field === 'quantity' && typeof value === 'number') {
       const ranges = [pp?.quantity, fp?.quantity];
       if (op === 'eq') {
@@ -267,6 +287,26 @@ function auditConfig(config: ConfigurationState, gold: readonly Triple[], catalo
   if (crf.some((entry) => entry && !entry.compatibleFabrics.includes(fab.weave))) violations.add('craftCompatibility');
   return { unknownId, violations: [...violations].sort(), unknowns: [...unknowns].sort() };
 }
+
+test('audits named venues by identity and equates only the same eligible venue set', () => {
+  const catalog = { patterns: PATTERNS, fabrics: FABRICS, crafts: CRAFTS, scenes: SCENES, cases: HISTORICAL_CASES };
+  const stageConfig: ConfigurationState = {
+    patternId: 'pat-official-stage-twopiece', fabricId: 'fab-official-ivory-rose-stage', craftIds: [],
+    sceneId: 'scene-outdoor-stage', activeView: 'scene_look', focusedHotspotId: null,
+  };
+  const scene = (value: string, op: Triple['op'] = 'eq'): Triple => ({ field: 'scene', op, value });
+  expect(auditConfig(stageConfig, [scene(stageConfig.sceneId)], catalog, false).violations).not.toContain('scene');
+  expect(auditConfig(stageConfig, [scene('scene-bund-banquet')], catalog, false).violations).toContain('scene');
+  expect(auditConfig(stageConfig, [scene('outdoor_stage', 'neq')], catalog, false).violations).toContain('scene');
+  expect(auditSceneValue('scene-studio-minimal', 'scene-studio-minimal', SCENES)).toBe(true);
+  expect(auditSceneValue('scene-studio-minimal', 'indoor_formal', SCENES)).toBeUndefined();
+  expect(hardScore([scene('scene-outdoor-stage')], [scene('outdoor_stage')]).tp).toBe(0);
+  expect(hardScore([scene('scene-outdoor-stage')], [scene('outdoor_stage')], scoredTripleKey).tp).toBe(1);
+  expect(hardScore([scene('scene-bund-banquet')], [scene('formal_evening')], scoredTripleKey).tp).toBe(1);
+  expect(hardScore([scene('scene-bund-protocol')], [scene('indoor_formal')], scoredTripleKey).tp).toBe(0);
+  expect(hardScore([scene('scene-jingan-salon')], [scene('scene-bund-banquet')], scoredTripleKey).tp).toBe(0);
+  expect(hardScore([scene('scene-outdoor-stage', 'neq')], [scene('outdoor_stage', 'neq')], scoredTripleKey).tp).toBe(0);
+});
 
 function auditClaims(candidate: CandidateCombination, catalog: Catalog) {
   const inLibrary = new Set([
@@ -430,15 +470,16 @@ function scoreRevisions(fixture: Fixture, initial: Version, assumeNoConflictsWhe
       .map((item) => JSON.stringify([item.field, item.sourceTurnId, item.quote, item.blocking, item.withdraws]));
     const pendingAfter = new Set(knownPending(actual));
     const preservedExistingPending = knownPending(before).every((source) => pendingAfter.has(source));
+    const scoreKey = (item: Triple) => scoredTripleKey(item);
     const invariant = preservedExistingPending && preservedExistingHard && sameSet(
-      actualHard.filter(({ field }) => preservedFields.includes(field)).map(tripleKey),
-      step.hard.filter(({ field }) => preservedFields.includes(field)).map(tripleKey),
+      actualHard.filter(({ field }) => preservedFields.includes(field)).map(scoreKey),
+      step.hard.filter(({ field }) => preservedFields.includes(field)).map(scoreKey),
     );
     const changedFields = [...new Set([...beforeHard, ...actualHard].map(({ field }) => field))].filter((field) =>
       !sameSet(beforeHard.filter((item) => item.field === field).map(tripleKey),
         actualHard.filter((item) => item.field === field).map(tripleKey)),
     );
-    const expectedState = sameSet(actualHard.map(tripleKey), step.hard.map(tripleKey)) &&
+    const expectedState = sameSet(actualHard.map(scoreKey), step.hard.map(scoreKey)) &&
       sameSet(changedFields, revision.changedFields);
     const savedParent = history.versions.find(({ id }) => id === actual.parentVersionId) ?? null;
     const reopenedRecord = archiveHistory(history, actual);
@@ -515,6 +556,8 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
       const preferred = oldNotice.some((notice) => notice.id === 'feas-craft-ok');
       const oldScore = hardScore(turn.hard, old.triples);
       const newScore = hardScore(turn.hard, observed);
+      const oldEquivalent = hardScore(turn.hard, old.triples, (item) => scoredTripleKey(item, baseline.catalog.scenes));
+      const newEquivalent = hardScore(turn.hard, observed, scoredTripleKey);
       const catalogExpected = turn.catalog ?? fixture.catalog;
       const unresolvedOverwrites = turn.unknowns.filter(({ field }) => newScore.extra.some((item) =>
         item.field === field && item.op === 'eq',
@@ -527,11 +570,11 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
         : null;
       return {
         id: fixture.id, group: fixture.group, catalogOutcome: catalogExpected?.outcome ?? null,
-        old: { score: oldScore, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), old.triples.filter((item) => item.op === 'neq')),
+        old: { score: oldScore, equivalentScore: oldEquivalent, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), old.triples.filter((item) => item.op === 'neq')),
           manual: manualEffort(oldScore, old.ambiguous), unknownId: oldAudit.unknownId, knownViolation: oldUnwarned,
           fakeClaim: preferred && oldAudit.violations.includes('craftCompatibility'),
           catalog: catalogExpectation(catalogExpected, [oldConfig]) },
-        current: { score: newScore, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), observed.filter((item) => item.op === 'neq')),
+        current: { score: newScore, equivalentScore: newEquivalent, negation: hardScore(turn.hard.filter((item) => item.op === 'neq'), observed.filter((item) => item.op === 'neq')),
           manual: manualEffort(newScore), quoteCount: claimSourceCount(requirement), hardClaimCount: observed.length,
           unknownId: newAudit.some((item) => item.unknownId || item.outsideReferences.length > 0),
           knownViolation: [...new Set(newAudit.flatMap((item) => item.violations))],
@@ -545,7 +588,9 @@ test.each(suites)('replays $source and writes the evaluation report', (suite) =>
     });
     function totals(variant: 'old' | 'current') {
       return {
-        hard: sum(rows.map((row) => row[variant].score)), negation: sum(rows.map((row) => row[variant].negation)),
+        hard: sum(rows.map((row) => row[variant].score)),
+        decisionEquivalentHard: sum(rows.map((row) => row[variant].equivalentScore)),
+        negation: sum(rows.map((row) => row[variant].negation)),
         corrections: rows.reduce((count, row) => count + row[variant].manual.corrections, 0),
         missing: rows.reduce((count, row) => count + row[variant].manual.missing, 0),
         outside: rows.filter((row) => row[variant].unknownId).length,
